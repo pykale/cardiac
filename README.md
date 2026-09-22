@@ -1,4 +1,6 @@
-# KaleCardiac
+<p align="center">
+  <img src="https://github.com/pykale/cardiac/raw/main/docs/images/kalecardiac_logo_long.png" width="40%" alt='project-kalecardiac'>
+</p>
 
 > *Multimodal machine learning for cardiovascular research: ECG, chest X-ray, cardiac imaging, and clinical data, with representation learning, multimodal fusion, and clinical prediction.*
 
