@@ -1,0 +1,54 @@
+# A few epochs on a small synthetic cohort: checks the workflow end to end in under a
+# minute on a CPU. Useful for validating the pipeline, not for reporting results.
+DATASET:
+  ROOT: ""
+  NUM_WORKERS: 0
+  SPLIT_MODE: "cv"
+  NUM_FOLDS: 3
+  VAL_RATIO: 0.2
+
+ECG:
+  # Six synthetic leads of 512 samples, flattened end to end: 6 x 512 = 3072.
+  # The flattened length must match, or the crop keeps only the first lead or two.
+  LENGTH: 3072
+  SAMPLING_RATE: 500
+  NUM_CHANNELS: 1
+  ENCODER: "conv"
+
+IMAGE:
+  SIZE: [32, 32]
+  CHANNELS: 1
+
+MODEL:
+  LATENT_DIM: 32
+  CHANNELS: [8, 16]
+  HEAD_HIDDEN: [32]
+  FREEZE_ENCODERS: true
+
+OBJECTIVE:
+  RECONSTRUCTION_WEIGHTS: ["ecg:10", "cxr:1"]
+  SCALE_FACTOR: 0.0001
+  ANNEALING_EPOCHS: 2
+  UNIMODAL_STREAMS: true
+
+SOLVER:
+  SEED: 2026
+  BASE_LR: 0.001
+  MAX_EPOCHS: 3
+  BATCH_SIZE: 16
+  ACCELERATOR: "cpu"
+  DEVICES: "auto"
+
+FINETUNE:
+  MAX_EPOCHS: 3
+  BASE_LR: 0.001
+  BATCH_SIZE: 16
+
+SYNTHETIC:
+  NUM_SUBJECTS: 48
+  NUM_SAMPLES: 512
+  IMAGE_SIZE: [32, 32]
+
+OUTPUT:
+  OUT_DIR: "outputs/cardiovae_multimodal_quick"
+  INTERPRET: false

@@ -1,0 +1,68 @@
+# The published setup: pretrain on twelve leads of ten-second recordings at 500 Hz,
+# fine-tune on the six limb leads a reduced-lead recorder captures, five-fold
+# cross-validated.
+#
+# DATASET.ROOT must point at a local copy of a cohort with the schema in this
+# example's README. Both cohorts the paper used are private clinical data and are not
+# distributed with this repository.
+DATASET:
+  ROOT: ""
+  NUM_WORKERS: 4
+  SPLIT_MODE: "cv"
+  NUM_FOLDS: 5
+  VAL_RATIO: 0.15
+
+ECG:
+  LEADS: ["I", "II", "III", "aVR", "aVL", "aVF", "V1", "V2", "V3", "V4", "V5", "V6"]
+  FINETUNE_LEADS: ["I", "II", "III", "aVR", "aVL", "aVF"]
+  LENGTH: 5000
+  SAMPLING_RATE: 500
+  STANDARDISE: true
+  ENCODER: "conv"
+  DERIVE_MISSING: false
+
+MODEL:
+  LATENT_DIM: 256
+  CHANNELS: [16, 32, 64]
+  HEAD_HIDDEN: [128]
+  DROPOUT: 0.5
+  SHARED_DECODER: true
+  FREEZE_ENCODERS: true
+
+FUSION:
+  LATENT_METHOD: "hime"
+  NUM_GROUPS: 4
+  USE_PRIOR: true
+  METHOD: "concat"
+  FUSION_DIM: 0
+
+OBJECTIVE:
+  SCALE_FACTOR: 0.001
+  ANNEALING_EPOCHS: 50
+  ALIGNMENT_WEIGHT: 0.1
+  UNIMODAL_STREAMS: false
+
+SOLVER:
+  SEED: 123
+  BASE_LR: 0.0005
+  WEIGHT_DECAY: 0.00001
+  MAX_EPOCHS: 100
+  BATCH_SIZE: 128
+  OPTIMIZER: "AdamW"
+
+FINETUNE:
+  MAX_EPOCHS: 50
+  BASE_LR: 0.0001
+  BATCH_SIZE: 32
+
+ENDPOINT:
+  NAME: "ph"
+  VALUE_COLUMN: "mpap_mmhg"
+  THRESHOLD: 20.0
+  UNIT: "mmHg"
+  REGRESSION: false
+
+OUTPUT:
+  OUT_DIR: "outputs/lsemvae_ecg"
+  INTERPRET: true
+  ATTRIBUTION_THRESHOLD: 0.7

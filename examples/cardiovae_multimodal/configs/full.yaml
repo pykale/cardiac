@@ -1,0 +1,67 @@
+# The published setup: a ten-second twelve-lead recording at 500 Hz flattened into one
+# channel, a 224-pixel radiograph, a 256-dimensional shared latent, and ten-fold
+# cross-validation of the fine-tuned model.
+#
+# DATASET.ROOT must point at a local copy of a cohort with the schema in this
+# example's README. The registry the paper used is private clinical data and is not
+# distributed with this repository.
+DATASET:
+  ROOT: ""
+  NUM_WORKERS: 4
+  SPLIT_MODE: "cv"
+  NUM_FOLDS: 10
+  VAL_RATIO: 0.15
+  REQUIRE_MODALITIES: ["cxr"]
+
+ECG:
+  LENGTH: 60000
+  SAMPLING_RATE: 500
+  NUM_CHANNELS: 1
+  STANDARDISE: true
+  ENCODER: "conv"
+
+IMAGE:
+  SIZE: [224, 224]
+  CHANNELS: 1
+  SCALE: true
+
+MODEL:
+  LATENT_DIM: 256
+  CHANNELS: [16, 32, 64]
+  HEAD_HIDDEN: [128]
+  DROPOUT: 0.5
+  FREEZE_ENCODERS: true
+
+FUSION:
+  METHOD: "concat"
+  FUSION_DIM: 0
+
+OBJECTIVE:
+  RECONSTRUCTION_WEIGHTS: ["ecg:10", "cxr:1"]
+  SCALE_FACTOR: 0.0001
+  ANNEALING_EPOCHS: 50
+  UNIMODAL_STREAMS: true
+  ALIGNMENT_WEIGHT: 0.0
+
+SOLVER:
+  SEED: 2026
+  BASE_LR: 0.001
+  MAX_EPOCHS: 100
+  BATCH_SIZE: 128
+  OPTIMIZER: "Adam"
+
+FINETUNE:
+  MAX_EPOCHS: 50
+  BASE_LR: 0.001
+  BATCH_SIZE: 32
+
+ENDPOINT:
+  NAME: "chdi"
+  VALUE_COLUMN: "mpap_mmhg"
+  THRESHOLD: 20.0
+  UNIT: "mmHg"
+  REGRESSION: false
+
+OUTPUT:
+  OUT_DIR: "outputs/cardiovae_multimodal"
+  INTERPRET: true

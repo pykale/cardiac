@@ -1,0 +1,53 @@
+# A few epochs on a small synthetic cohort: checks the workflow end to end in about a
+# minute on a CPU. Useful for validating the pipeline, not for reporting results.
+DATASET:
+  ROOT: ""
+  NUM_WORKERS: 0
+  SPLIT_MODE: "cv"
+  NUM_FOLDS: 3
+  VAL_RATIO: 0.2
+
+ECG:
+  LEADS: ["I", "II", "III", "aVR", "aVL", "aVF"]
+  FINETUNE_LEADS: ["I", "II", "III"]
+  LENGTH: 512
+  SAMPLING_RATE: 500
+  ENCODER: "conv"
+
+MODEL:
+  LATENT_DIM: 32
+  CHANNELS: [8, 16]
+  HEAD_HIDDEN: [32]
+  SHARED_DECODER: true
+  FREEZE_ENCODERS: true
+
+FUSION:
+  LATENT_METHOD: "hime"
+  NUM_GROUPS: 3
+  METHOD: "concat"
+
+OBJECTIVE:
+  SCALE_FACTOR: 0.001
+  ANNEALING_EPOCHS: 2
+  ALIGNMENT_WEIGHT: 0.1
+
+SOLVER:
+  SEED: 123
+  BASE_LR: 0.001
+  MAX_EPOCHS: 3
+  BATCH_SIZE: 16
+  ACCELERATOR: "cpu"
+  DEVICES: "auto"
+
+FINETUNE:
+  MAX_EPOCHS: 3
+  BASE_LR: 0.001
+  BATCH_SIZE: 16
+
+SYNTHETIC:
+  NUM_SUBJECTS: 48
+  NUM_SAMPLES: 512
+
+OUTPUT:
+  OUT_DIR: "outputs/lsemvae_ecg_quick"
+  INTERPRET: false

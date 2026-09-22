@@ -1,0 +1,127 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kalecardiac"
+dynamic = ["version"]
+description = "Multimodal cardiovascular machine learning for the PyKale ecosystem — ECG, chest X-ray, cardiac imaging, and clinical data, with representation learning and clinical prediction"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+authors = [{ name = "PyKale" }]
+keywords = ["pykale", "cardiac", "cardiovascular", "ecg", "multimodal", "vae", "pytorch"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Medical Science Apps.",
+]
+dependencies = [
+    "torch",
+    "numpy",
+    "pandas",
+    "scikit-learn",
+    "pyyaml",
+    "yacs",
+    "pykale>=0.2.0",
+    "pytorch-lightning",
+]
+
+[project.optional-dependencies]
+# Reading and delineating raw ECG recordings. The library's signal transforms are
+# pure NumPy; these are only needed to read vendor formats or find wave boundaries.
+ecg = [
+    "wfdb",
+    "neurokit2",
+]
+# Reading medical images from disk in the formats cardiac cohorts publish them in.
+imaging = [
+    "pillow",
+    "pydicom",
+]
+# Attribution and latent-space projection.
+interpret = [
+    "captum",
+    "umap-learn",
+]
+dev = [
+    "pytest",
+    "pytest-cov",
+    "ruff",
+    "mypy",
+    "pre-commit",
+    "build",
+    "twine",
+]
+
+[project.urls]
+Homepage = "https://github.com/pykale/cardiac"
+Repository = "https://github.com/pykale/cardiac"
+Issues = "https://github.com/pykale/cardiac/issues"
+
+[tool.setuptools]
+include-package-data = false
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["kalecardiac*"]
+namespaces = true
+
+[tool.setuptools.package-data]
+kalecardiac = [
+    "_version.txt",
+    "**/*.json",
+    "**/*.yaml",
+    "**/*.yml",
+]
+
+[tool.setuptools.dynamic]
+version = { file = "kalecardiac/_version.txt" }
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+exclude = [
+    "build",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle
+    "W",    # pycodestyle
+    "F",    # Pyflakes
+    "I",    # isort
+    "UP",   # pyupgrade
+    "B",    # bugbear
+    "SIM",  # simplify
+    "T20",  # flake8-print
+]
+ignore = [
+    "B008",
+    "E501",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Examples report to the console: that is their output, not a stray debug print.
+"examples/**" = ["T20"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["kalecardiac", "examples", "tests"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "slow: exercises a whole example workflow; deselect with -m 'not slow'",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning:pkg_resources",
+]
+
+[tool.mypy]
+ignore_missing_imports = true

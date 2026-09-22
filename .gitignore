@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+venv/
+dist/
+build/
+*.egg
+.coverage
+coverage.xml
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Data and experiment outputs. Nothing patient-derived belongs in this repository.
+data/
+outputs/
+checkpoints/
+lightning_logs/
+*.pt
+*.pth
+*.dcm
+*.npy
+
+# OS
+.DS_Store
+Thumbs.db
