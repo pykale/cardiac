@@ -214,3 +214,18 @@ def test_ecg_source_accepts_torch_and_numpy_alike(cohort):
     as_tensors = {name: torch.from_numpy(value) for name, value in cohort.ecg.items()}
     source = ECGArraySource(as_tensors, leads=cohort.leads)
     assert source.get(cohort.subject_id[0], 0).shape == (len(cohort.leads), source.length)
+
+
+class TestArraySourceShapeAndDescriptions:
+    def test_a_declared_shape_the_values_do_not_have_is_refused(self):
+        with pytest.raises(ValueError, match=r"shape \(4,\) does not match the values' shape \(3,\)"):
+            ArraySource({"s1": np.zeros(3)}, shape=(4,))
+
+    def test_sources_datasets_and_targets_describe_themselves(self):
+        source = ArraySource({"s1": np.zeros(3)})
+        target = ColumnTarget.from_mapping({"label": {"s1": 1}})
+        assert repr(source) == "ArraySource(1 subjects | shape=(3,))"
+        assert repr(target) == "ColumnTarget(1 subjects | keys=['label'])"
+        assert repr(MultimodalDataset(["s1"], {"clinical": source}, target=target)) == (
+            "MultimodalDataset(1 subjects | clinical=ArraySource)"
+        )

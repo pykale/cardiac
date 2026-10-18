@@ -75,6 +75,28 @@ class TestConv1d:
         with pytest.raises(ValueError, match="fewer layers"):
             conv_output_length(4, (1, 1), kernel_size=5, stride=2, padding=0)
 
+    def test_padding_follows_the_kernel_by_default(self):
+        # A fixed padding of 1 is only "same"-style for a kernel of 3; tying it to the
+        # kernel keeps stride 2 halving the length whatever MODEL.KERNEL_SIZE is.
+        for kernel in (3, 5, 7):
+            encoder = Conv1dEncoder(in_channels=1, length=256, channels=(4, 8), kernel_size=kernel)
+            assert encoder.padding == kernel // 2
+            assert encoder.output_length == 64, kernel
+
+    def test_the_default_kernel_keeps_its_original_padding(self):
+        # Kernel 3 resolves to padding 1, which is what both reference implementations
+        # use -- so the default architecture is unchanged.
+        assert Conv1dEncoder(in_channels=1, length=64).padding == 1
+
+    def test_an_explicit_padding_is_honoured(self):
+        encoder = Conv1dEncoder(in_channels=1, length=256, channels=(4,), kernel_size=5, padding=0)
+        assert encoder.padding == 0
+        assert encoder.output_length == (256 - 5) // 2 + 1
+
+    def test_a_non_positive_kernel_is_rejected(self):
+        with pytest.raises(ValueError, match="kernel_size must be positive"):
+            Conv1dEncoder(in_channels=1, length=64, kernel_size=0)
+
     def test_out_dim_is_channels_times_length(self):
         encoder = Conv1dEncoder(in_channels=1, length=256, channels=(4, 8, 16))
         assert encoder.out_dim == 16 * 32
@@ -119,6 +141,16 @@ class TestConv1d:
 class TestConv2d:
     def test_output_size_matches_the_formula(self):
         assert conv_output_size((224, 224), 3, kernel_size=3, stride=2, padding=1) == (28, 28)
+
+    def test_padding_follows_the_kernel_by_default(self):
+        for kernel in (3, 5):
+            encoder = Conv2dEncoder(in_channels=1, size=(32, 32), channels=(4, 8), kernel_size=kernel)
+            assert encoder.padding == kernel // 2
+            assert encoder.output_size == (8, 8), kernel
+
+    def test_a_non_positive_kernel_is_rejected(self):
+        with pytest.raises(ValueError, match="kernel_size must be positive"):
+            Conv2dEncoder(in_channels=1, size=(16, 16), kernel_size=0)
 
     def test_non_square_images_work(self):
         encoder = Conv2dEncoder(in_channels=1, size=(40, 64), channels=(4, 8))
@@ -236,3 +268,92 @@ class TestMLP:
     def test_a_non_positive_width_is_rejected(self):
         with pytest.raises(ValueError, match="must be positive"):
             MLP(4, 0)
+
+
+class TestRefusalAndDescription:
+    """Every block refuses an impossible configuration by name, and describes itself by its shape."""
+
+    @pytest.mark.parametrize(
+        "build",
+        [
+            lambda: Conv1dEncoder(in_channels=0, length=64),
+            lambda: Conv1dEncoder(in_channels=1, length=64, channels=()),
+            lambda: Conv1dDecoder(latent_dim=0, out_channels=1, length=64),
+            lambda: Conv2dEncoder(in_channels=1, size=(32,)),
+            lambda: Conv2dDecoder(latent_dim=8, out_channels=1, size=(32,)),
+            lambda: ResidualBlock1d(0, 4),
+            lambda: ResidualConv1dEncoder(in_channels=1, channels=()),
+            lambda: TransformerSignalEncoder(in_channels=1, patch_size=0),
+        ],
+        ids=[
+            "conv1d-no-channels",
+            "conv1d-no-layers",
+            "conv1d-decoder",
+            "conv2d-flat-size",
+            "conv2d-decoder",
+            "residual-block",
+            "residual-no-stages",
+            "transformer-no-patch",
+        ],
+    )
+    def test_an_impossible_configuration_is_refused(self, build):
+        with pytest.raises(ValueError, match="positive"):
+            build()
+
+    def test_an_image_stack_too_deep_for_its_input_is_refused_with_advice(self):
+        with pytest.raises(ValueError, match="use fewer layers"):
+            conv_output_size((4, 4), layers=2, kernel_size=3, stride=2, padding=0)
+
+    @pytest.mark.parametrize(
+        "build",
+        [
+            lambda: Conv1dDecoder(latent_dim=8, out_channels=1, length=64),
+            lambda: Conv2dDecoder(latent_dim=8, out_channels=1, size=(16, 16)),
+        ],
+        ids=["signal", "image"],
+    )
+    def test_a_decoder_names_the_latent_it_expected(self, build):
+        with pytest.raises(ValueError, match=r"expected \(batch, 8\) latent"):
+            build()(torch.zeros(2, 5))
+
+    def test_a_target_shorter_than_the_upsampling_is_cropped(self):
+        # Three stride-2 layers widen one sample to eight; a five-sample target is cut.
+        decoder = Conv1dDecoder(latent_dim=8, out_channels=1, length=5, channels=(4, 4, 4))
+        assert decoder(torch.zeros(2, 8)).shape == (2, 1, 5)
+
+    def test_an_image_decoder_may_have_no_output_activation(self):
+        decoder = Conv2dDecoder(latent_dim=8, out_channels=1, size=(16, 16), output_activation=None)
+        assert isinstance(decoder.output_activation, torch.nn.Identity)
+
+    def test_an_unknown_image_output_activation_is_refused(self):
+        with pytest.raises(ValueError, match="unknown output_activation 'softplus'"):
+            Conv2dDecoder(latent_dim=8, out_channels=1, size=(16, 16), output_activation="softplus")
+
+    @pytest.mark.parametrize(
+        ("build", "expected"),
+        [
+            (
+                lambda: Conv1dEncoder(in_channels=2, length=64, channels=(4, 8)),
+                "Conv1dEncoder(in_channels=2, length=64",
+            ),
+            (
+                lambda: Conv1dDecoder(latent_dim=8, out_channels=2, length=64),
+                "Conv1dDecoder(latent_dim=8, out_channels=2",
+            ),
+            (
+                lambda: Conv2dEncoder(in_channels=1, size=(16, 16), channels=(4,)),
+                "size=(16, 16), channels=[4], out_dim=256",
+            ),
+            (lambda: Conv2dDecoder(latent_dim=8, out_channels=1, size=(16, 16)), "Conv2dDecoder(latent_dim=8"),
+            (lambda: ResidualConv1dEncoder(in_channels=1, channels=(8,)), "ResidualConv1dEncoder(in_channels=1"),
+            (
+                lambda: TransformerSignalEncoder(
+                    in_channels=1, patch_size=8, d_model=16, nhead=2, num_layers=1, dim_feedforward=16
+                ),
+                "patch_size=8, out_dim=16",
+            ),
+        ],
+        ids=["conv1d", "conv1d-decoder", "conv2d", "conv2d-decoder", "residual", "transformer"],
+    )
+    def test_a_block_describes_itself_in_a_model_summary(self, build, expected):
+        assert expected in repr(build())

@@ -95,3 +95,24 @@ class TestImageFileSource:
 
     def test_provenance_is_empty_for_a_subject_with_no_file(self, written):
         assert ImageFileSource(written, channels=1).provenance("nobody", 0) == {}
+
+
+class TestImageEdgesAndDescriptions:
+    def test_a_transform_that_breaks_the_layout_is_named(self, cohort):
+        source = ImageArraySource(cohort.image, channels=1, size=(32, 32))
+        source.transform = lambda image: image[0]  # drops the channel axis
+        with pytest.raises(ImageFormatError, match="it must keep \\(1, height, width\\)"):
+            source.get(cohort.subject_id[0], 0)
+
+    def test_a_picture_file_is_read_through_pillow(self, tmp_path):
+        image = pytest.importorskip("PIL.Image")
+        pixels = np.arange(64, dtype=np.uint8).reshape(8, 8)
+        image.fromarray(pixels).save(tmp_path / "s1.png")
+        source = ImageFileSource({"s1": tmp_path / "s1.png"})
+        assert source.size == (8, 8)
+        assert np.array_equal(source.get("s1", 0).numpy()[0], pixels.astype(np.float32))
+
+    def test_sources_describe_their_subjects_and_shape(self, tmp_path):
+        assert repr(ImageArraySource({"s1": np.zeros((8, 8))})) == "ImageArraySource(1 subjects | 1x8x8)"
+        np.save(tmp_path / "s1.npy", np.zeros((8, 8), dtype=np.float32))
+        assert repr(ImageFileSource({"s1": tmp_path / "s1.npy"})) == "ImageFileSource(1 subjects | 1x8x8)"

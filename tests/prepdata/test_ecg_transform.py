@@ -136,3 +136,9 @@ def test_pipeline_plugs_into_an_ecg_source(cohort):
     recording = source.get(cohort.subject_id[0], 0)
     assert recording.shape == (len(cohort.leads), 64)
     assert float(recording.mean(dim=1).abs().max()) < 1e-4
+
+
+class TestDeriveShapeCheck:
+    def test_a_recording_that_disagrees_with_its_leads_is_refused(self):
+        with pytest.raises(ECGFormatError, match="does not match the 2 declared leads"):
+            derive_limb_leads(np.zeros((3, 10)), ["I", "II"], ["III"])

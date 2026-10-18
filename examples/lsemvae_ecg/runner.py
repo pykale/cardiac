@@ -19,7 +19,7 @@ The workflow the example demonstrates:
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
 import numpy as np
@@ -27,11 +27,14 @@ import pytorch_lightning as pl
 import torch
 from torch.utils.data import DataLoader
 
-from examples.lsemvae_ecg.data import LeadCohort, load_cohort, summarise
+from examples.lsemvae_ecg.data import LeadCohort, check_endpoint, load_cohort, summarise
 from kalecardiac.evaluate import (
     MetricError,
     binary_metrics,
+    multiclass_metrics,
+    multiclass_roc_auc,
     predict_split,
+    r2_score,
     regression_metrics,
     roc_auc,
     save_predictions,
@@ -43,13 +46,107 @@ from kalecardiac.interpret import (
     latent_embedding,
     modality_ablation,
     modality_attributions,
+    progressive_ablation,
 )
-from kalecardiac.loaddata import CrossValidation, HoldOut, MultimodalDataset, collate_subjects, release_workers
+from kalecardiac.loaddata import (
+    CrossValidation,
+    HoldOut,
+    MultimodalDataset,
+    canonical_lead,
+    canonical_leads,
+    collate_subjects,
+    release_workers,
+)
 from kalecardiac.model.embed import LSEMVAE, MultimodalPredictor
+from kalecardiac.model.predict import class_weight_from_labels, positive_weight_from_labels
 from kalecardiac.pipeline import CardiacTrainer, ClassificationTask, ReconstructionTask, RegressionTask
-from kalecardiac.utils import ensure_dir, load_checkpoint, set_seed, write_csv, write_json
+from kalecardiac.utils import ensure_dir, load_checkpoint, preserve_rng_state, set_seed, write_csv, write_json
 
 logger = logging.getLogger("lsemvae_ecg")
+
+
+#: The model this example builds. ``MODEL.NAME`` must say so, which is what turns a
+#: configuration copied from another example into a start-up error rather than a run
+#: that quietly trains the wrong thing.
+MODEL_NAME = "lsemvae"
+
+
+def check_model_name(cfg) -> None:
+    """Reject a ``MODEL.NAME`` this example cannot build.
+
+    Raises:
+        ValueError: If ``MODEL.NAME`` is anything but :data:`MODEL_NAME`, naming what to
+            do instead.
+    """
+    if cfg.MODEL.NAME != MODEL_NAME:
+        raise ValueError(
+            f"MODEL.NAME is {cfg.MODEL.NAME!r}, but this example builds {MODEL_NAME!r}. For a signal-and-image "
+            f"model run examples.cardiovae_multimodal; to ablate the fusion, keep MODEL.NAME and set "
+            f"FUSION.LATENT_METHOD."
+        )
+
+
+def resolve_lead_groups(cfg, lead_groups: Sequence[Sequence[str]] | None) -> list[tuple[str, ...]]:
+    """The lead groups to compare, canonicalised and validated before anything is loaded.
+
+    Checked here rather than in the fold loop, because there it was only reached after
+    pretraining had already run: a misspelt lead cost a whole pretraining run before it
+    failed. Names are canonicalised as everywhere else, so ``avf`` is ``aVF``.
+
+    Raises:
+        ValueError: If no group is left, or a group names a lead the labelled cohort
+            does not record.
+    """
+    available = canonical_leads(list(cfg.ECG.FINETUNE_LEADS))
+    if lead_groups is None:
+        groups = [available]
+    else:
+        # Emptiness is checked before canonicalising, whose own error is about declaring
+        # a source's leads and would not say what is actually wrong with a --leads group.
+        requested = [tuple(group) for group in lead_groups]
+        if not requested or not all(requested):
+            raise ValueError("no lead group to compare; pass --leads with at least one lead per group")
+        groups = [canonical_leads(group) for group in requested]
+
+    unknown = sorted({lead for group in groups for lead in group} - set(available))
+    if unknown:
+        raise ValueError(
+            f"lead group names {unknown}, which the labelled cohort does not record; ECG.FINETUNE_LEADS is "
+            f"{list(available)}"
+        )
+    return [tuple(group) for group in groups]
+
+
+def resolve_robustness_order(cfg) -> tuple[str, ...]:
+    """``ROBUSTNESS.ORDER``, canonicalised and validated before anything is loaded.
+
+    Raises:
+        ValueError: If it names a lead twice, or one the labelled cohort does not record.
+    """
+    order = tuple(canonical_lead(lead) for lead in cfg.ROBUSTNESS.ORDER)
+    repeated = sorted({lead for lead in order if order.count(lead) > 1})
+    if repeated:
+        raise ValueError(f"ROBUSTNESS.ORDER names {repeated} more than once; each lead is withheld once")
+    available = canonical_leads(list(cfg.ECG.FINETUNE_LEADS))
+    unknown = sorted(set(order) - set(available))
+    if unknown:
+        raise ValueError(
+            f"ROBUSTNESS.ORDER names {unknown}, which the labelled cohort does not record; ECG.FINETUNE_LEADS is "
+            f"{list(available)}"
+        )
+    return order
+
+
+def withholding_order(priority: Sequence[str], group: Sequence[str]) -> list[str]:
+    """The order a group's leads are withheld in, leaving its last lead present.
+
+    ``priority`` first, as far as the group has those leads, then the rest from the end
+    of the group backwards -- so a group in the conventional order is reduced towards
+    lead I, the lead a single-lead wearable records.
+    """
+    ordered = [lead for lead in priority if lead in group]
+    ordered += [lead for lead in reversed(group) if lead not in ordered]
+    return ordered[: len(group) - 1]
 
 
 def build_model(cfg, cohort: LeadCohort, leads: Sequence[str]) -> LSEMVAE:
@@ -59,12 +156,31 @@ def build_model(cfg, cohort: LeadCohort, leads: Sequence[str]) -> LSEMVAE:
         length=cohort.length,
         latent_dim=cfg.MODEL.LATENT_DIM,
         channels=list(cfg.MODEL.CHANNELS),
+        kernel_size=cfg.MODEL.KERNEL_SIZE,
         encoder=cfg.ECG.ENCODER,
         fusion=cfg.FUSION.LATENT_METHOD,
         num_groups=cfg.FUSION.NUM_GROUPS,
         shared_decoder=cfg.MODEL.SHARED_DECODER,
         use_prior=cfg.FUSION.USE_PRIOR,
     )
+
+
+def load_pretrained(cfg, cohort: LeadCohort) -> LSEMVAE:
+    """Load the representation from ``MODEL.PRETRAINED`` rather than learning it again.
+
+    The model is built over the *pretraining* leads, which is what the checkpoint holds;
+    fine-tuning then reads a subset of them, so a twelve-lead checkpoint serves a
+    six-lead run unchanged. Loaded strictly, so a checkpoint from a different
+    architecture fails here rather than half-loading.
+
+    Raises:
+        FileNotFoundError: If the checkpoint does not exist.
+        RuntimeError: If its weights do not match the configured architecture.
+    """
+    model = build_model(cfg, cohort, cohort.pretrain_leads)
+    load_checkpoint(cfg.MODEL.PRETRAINED, model, strict=True)
+    logger.info("loaded the pretrained representation from %s; pretraining skipped", cfg.MODEL.PRETRAINED)
+    return model
 
 
 def lightning_trainer(cfg, max_epochs: int, out_dir: Path, monitor: str | None = None, mode: str = "min"):
@@ -135,21 +251,25 @@ def pretrain(cfg, cohort: LeadCohort, out_dir: Path) -> LSEMVAE:
 
 
 def build_task(cfg, labels: Sequence[float]):
-    """The downstream task: a threshold on the measurement, or the measurement itself."""
-    if cfg.ENDPOINT.REGRESSION:
-        return RegressionTask(hidden_dims=list(cfg.MODEL.HEAD_HIDDEN), dropout=cfg.MODEL.DROPOUT)
+    """The downstream task: a class of the endpoint, or the measurement itself.
 
-    pos_weight = cfg.OBJECTIVE.POS_WEIGHT
-    if pos_weight == 0:
-        # From this fold's training labels only: a class balance taken over the whole
-        # cohort carries the test split's composition into the loss.
-        positives = float(np.sum(labels))
-        pos_weight = (len(labels) - positives) / max(positives, 1.0)
-    return ClassificationTask(
-        pos_weight=max(pos_weight, 0.0),
-        hidden_dims=list(cfg.MODEL.HEAD_HIDDEN),
-        dropout=cfg.MODEL.DROPOUT,
-    )
+    Class balance is taken from ``labels``, which must be this fold's *training* labels:
+    a balance taken over the whole cohort carries the test split's composition into the
+    loss. ``OBJECTIVE.POS_WEIGHT`` 0 derives it, a negative value disables it, and a
+    positive one fixes a binary endpoint's positive weight.
+    """
+    common = {"hidden_dims": list(cfg.MODEL.HEAD_HIDDEN), "dropout": cfg.MODEL.DROPOUT}
+    if cfg.ENDPOINT.REGRESSION:
+        return RegressionTask(**common)
+
+    training = torch.tensor(list(labels), dtype=torch.float32)
+    derive = cfg.OBJECTIVE.POS_WEIGHT == 0
+    num_classes = int(cfg.ENDPOINT.NUM_CLASSES)
+    if num_classes > 2:
+        weight = class_weight_from_labels(training, num_classes) if derive else None
+        return ClassificationTask(num_classes=num_classes, class_weight=weight, **common)
+    pos_weight = float(positive_weight_from_labels(training)) if derive else cfg.OBJECTIVE.POS_WEIGHT
+    return ClassificationTask(pos_weight=max(pos_weight, 0.0), **common)
 
 
 def fine_tune(
@@ -214,7 +334,30 @@ def score(cfg, predictions) -> dict:
     """Metrics for one fold, chosen by what the endpoint is."""
     if cfg.ENDPOINT.REGRESSION:
         return regression_metrics(predictions.targets["value"], predictions.scores, unit=cfg.ENDPOINT.UNIT)
+    if int(cfg.ENDPOINT.NUM_CLASSES) > 2:
+        # The scores are logits, one column per class; the metric applies the softmax.
+        return multiclass_metrics(predictions.targets["label"], predictions.scores)
     return binary_metrics(predictions.targets["label"], predictions.scores)
+
+
+def headline_metric(cfg) -> str:
+    """The metric a run is summarised by: the error, or the threshold-free ranking."""
+    if cfg.ENDPOINT.REGRESSION:
+        return "rmse"
+    return "roc_auc_ovr" if int(cfg.ENDPOINT.NUM_CLASSES) > 2 else "roc_auc"
+
+
+def withholding_metric(cfg) -> tuple[str, Callable, str]:
+    """What a rescoring with modalities withheld is measured in: ``(name, metric, target)``.
+
+    The threshold-free metric of each endpoint, so that a score which moves as a
+    modality is withheld is not also moving with an operating point.
+    """
+    if cfg.ENDPOINT.REGRESSION:
+        return "r2", r2_score, "value"
+    if int(cfg.ENDPOINT.NUM_CLASSES) > 2:
+        return "roc_auc_ovr", multiclass_roc_auc, "label"
+    return "roc_auc", roc_auc, "label"
 
 
 def interpret(cfg, model: CardiacTrainer, test_loader: DataLoader, out_dir: Path) -> dict:
@@ -237,15 +380,43 @@ def interpret(cfg, model: CardiacTrainer, test_loader: DataLoader, out_dir: Path
     except ImportError as error:
         logger.warning("skipping attribution: %s", error)
 
-    if not cfg.ENDPOINT.REGRESSION:
-        try:
-            summary["ablation"] = modality_ablation(model, test_loader, roc_auc, "label")
-        except MetricError as error:
-            logger.warning("skipping ablation: %s", error)
+    _, metric, target = withholding_metric(cfg)
+    try:
+        summary["ablation"] = modality_ablation(model, test_loader, metric, target)
+    except MetricError as error:
+        logger.warning("skipping ablation: %s", error)
 
     if summary:
         write_json(out_dir / "interpretation.json", summary)
     return summary
+
+
+def robustness(
+    cfg, model: CardiacTrainer, test_loader: DataLoader, group: Sequence[str], fold: int, priority: Sequence[str]
+) -> list[dict]:
+    """How the fine-tuned model degrades as its leads are withheld at inference.
+
+    The deployment question the lead-specific design exists to answer: a model
+    fine-tuned on a lead group, shown one lead fewer at each step until one is left.
+    Each lead has its own encoder and an absent lead is an absent expert, so the model
+    has a principled answer at every step; a channel-stacked model would have none.
+
+    Returns:
+        One row per step, for ``robustness.csv``.
+    """
+    name, metric, target = withholding_metric(cfg)
+    steps = progressive_ablation(model, test_loader, metric, target, withholding_order(priority, group))
+    return [
+        {
+            "fold": fold,
+            "step": step["step"],
+            "n_leads": len(step["present"]),
+            "leads": "+".join(step["present"]),
+            "withheld": "+".join(step["withheld"]),
+            name: step["score"],
+        }
+        for step in steps
+    ]
 
 
 def export_latents(cfg, pretrained: LSEMVAE, cohort: LeadCohort, out_dir: Path) -> None:
@@ -321,6 +492,12 @@ def run(cfg, lead_groups: Sequence[Sequence[str]] | None = None) -> dict:
     Returns:
         Per-group fold summaries, keyed by the group's name.
     """
+    # Everything that can be checked without data is checked before any is loaded.
+    check_model_name(cfg)
+    check_endpoint(cfg)
+    groups = resolve_lead_groups(cfg, lead_groups)
+    priority = resolve_robustness_order(cfg)
+
     set_seed(cfg.SOLVER.SEED)
     out_dir = ensure_dir(cfg.OUTPUT.OUT_DIR)
     (out_dir / "config.yaml").write_text(cfg.dump(), encoding="utf-8")
@@ -329,23 +506,21 @@ def run(cfg, lead_groups: Sequence[Sequence[str]] | None = None) -> dict:
     logger.info("cohort: %s", cohort.describe())
     write_json(out_dir / "cohort.json", summarise(cohort, cfg.ENDPOINT.NAME))
 
-    pretrained = pretrain(cfg, cohort, out_dir)
+    pretrained = load_pretrained(cfg, cohort) if cfg.MODEL.PRETRAINED else pretrain(cfg, cohort, out_dir)
+    # Reporting is kept off the training's random stream throughout, so turning a
+    # report on or off cannot change the models trained after it.
     if cfg.OUTPUT.INTERPRET:
-        export_latents(cfg, pretrained, cohort, out_dir)
-
-    groups = [tuple(cohort.finetune_leads)] if lead_groups is None else [tuple(group) for group in lead_groups]
+        with preserve_rng_state():
+            export_latents(cfg, pretrained, cohort, out_dir)
     assignments = splits(cfg, cohort)
 
     results: dict = {}
     rows: list[dict] = []
     for group in groups:
-        unknown = sorted(set(group) - set(cohort.finetune_sources))
-        if unknown:
-            raise ValueError(f"lead group names {unknown}, which the labelled cohort does not record")
-
         name = "+".join(group)
         group_dir = ensure_dir(out_dir / name)
         fold_metrics, fold_predictions = [], []
+        curve: list[dict] = []
 
         for fold, train_ids, val_ids, test_ids in assignments:
             # A fresh copy per fold: fine-tuning mutates the head, so reusing one model
@@ -361,11 +536,21 @@ def run(cfg, lead_groups: Sequence[Sequence[str]] | None = None) -> dict:
             logger.info("%s fold %d: %s", name, fold, _headline(cfg, outcome["metrics"]))
 
             if cfg.OUTPUT.INTERPRET and fold == len(assignments) - 1:
-                interpret(cfg, trained, test_loader, group_dir)
+                with preserve_rng_state():
+                    interpret(cfg, trained, test_loader, group_dir)
+            if cfg.ROBUSTNESS.ENABLED and len(group) > 1:
+                try:
+                    with preserve_rng_state():
+                        curve.extend(robustness(cfg, trained, test_loader, group, fold, priority))
+                except MetricError as error:
+                    logger.warning("skipping robustness for %s fold %d: %s", name, fold, error)
             release_workers(test_loader)
 
         summary = summarise_folds(fold_metrics)
         save_predictions(group_dir, fold_predictions, {"folds": fold_metrics, "summary": summary})
+        if curve:
+            write_csv(group_dir / "robustness.csv", curve)
+            logger.info("%s with leads withheld: %s", name, _curve_line(curve, withholding_metric(cfg)[0]))
         results[name] = summary
         rows.append({"leads": name, "n_leads": len(group), **_flatten(summary)})
         logger.info("%s over %d folds: %s", name, len(fold_metrics), _headline(cfg, summary, folded=True))
@@ -377,11 +562,22 @@ def run(cfg, lead_groups: Sequence[Sequence[str]] | None = None) -> dict:
 
 def _headline(cfg, metrics: Mapping, folded: bool = False) -> str:
     """One line naming the metric that matters for this endpoint."""
-    key = "rmse" if cfg.ENDPOINT.REGRESSION else "roc_auc"
+    key = headline_metric(cfg)
     if not folded:
         return f"{key}={metrics.get(key, float('nan')):.3f}"
     entry = metrics.get(key, {})
     return f"{key}={entry.get('mean', float('nan')):.3f} +/- {entry.get('std', float('nan')):.3f}"
+
+
+def _curve_line(curve: Sequence[Mapping], key: str) -> str:
+    """The robustness curve as one line: the fold mean at each number of leads."""
+    by_count: dict[int, list[float]] = {}
+    for row in curve:
+        by_count.setdefault(int(row["n_leads"]), []).append(float(row[key]))
+    return " | ".join(
+        f"{count} lead{'s' if count > 1 else ''} {key}={np.mean(values):.3f}"
+        for count, values in sorted(by_count.items(), reverse=True)
+    )
 
 
 def _flatten(summary: Mapping) -> dict:

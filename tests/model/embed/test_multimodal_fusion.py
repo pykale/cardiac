@@ -11,12 +11,14 @@ from kalecardiac.model.embed import (
     AttentionFusion,
     ConcatFusion,
     FeatureEmbedder,
+    FusionBlock,
     MeanFusion,
     MultimodalPredictor,
     build_fusion,
     build_signal_encoder,
     modality_dropout,
 )
+from kalecardiac.model.layers import Conv1dEncoder
 from kalecardiac.model.predict import LinearHead
 
 WIDTH = 6
@@ -238,3 +240,15 @@ class TestFeatureEmbedder:
         }
         predictor = MultimodalPredictor(embedders, lambda width: LinearHead(width, 1))
         assert predictor(inputs).prediction.shape == (4, 1)
+
+
+class TestFusionBlockAndPredictorDescription:
+    def test_the_base_block_leaves_fusing_to_its_subclasses(self):
+        block = FusionBlock([4])
+        with pytest.raises(NotImplementedError):
+            block([torch.zeros(2, 4)])
+
+    def test_a_predictor_describes_its_modalities_and_width(self):
+        embedder = FeatureEmbedder(Conv1dEncoder(in_channels=1, length=64, channels=(4,)), out_dim=5)
+        predictor = MultimodalPredictor({"a": embedder, "b": embedder}, lambda width: LinearHead(width, 1))
+        assert repr(predictor) == "MultimodalPredictor(2 modalities | method=concat | fused_dim=10)"

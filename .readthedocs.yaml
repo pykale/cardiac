@@ -1,0 +1,22 @@
+# Read the Docs configuration: https://docs.readthedocs.io/en/stable/config-file/v2.html
+version: 2
+
+build:
+  os: ubuntu-24.04
+  tools:
+    python: "3.11"
+  jobs:
+    # The API reference imports the package, and so PyTorch. The CPU wheel is a fraction
+    # of the default download; PyKale 0.2 caps torch at 2.6.
+    pre_install:
+      - pip install "torch<=2.6.0" torchvision --index-url https://download.pytorch.org/whl/cpu
+
+sphinx:
+  configuration: docs/conf.py
+  fail_on_warning: true
+
+python:
+  install:
+    - requirements: docs/requirements.txt
+    - method: pip
+      path: .

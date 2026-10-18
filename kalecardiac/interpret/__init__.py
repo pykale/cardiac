@@ -3,6 +3,7 @@
 .. code-block:: text
 
     attribution.py  gradient attribution, lead and wave importance, modality ablation
+                    one at a time and cumulatively
     latent.py       collecting and projecting a learned latent space
 
 Two families, answering questions at different levels. Attribution and ablation ask
@@ -21,6 +22,7 @@ from kalecardiac.interpret.attribution import (
     modality_ablation,
     modality_attributions,
     normalise_attribution,
+    progressive_ablation,
     segment_attribution_ratios,
 )
 from kalecardiac.interpret.latent import collect_latents, latent_embedding
@@ -34,6 +36,7 @@ __all__ = [
     "modality_ablation",
     "modality_attributions",
     "normalise_attribution",
+    "progressive_ablation",
     "segment_attribution_ratios",
 ]
 

@@ -96,8 +96,13 @@ class VariationalEncoder(nn.Module):
     :class:`~kalecardiac.model.embed.MultimodalVAE` is, whatever the modality happens
     to be::
 
-        >>> VariationalEncoder(build_signal_encoder("conv", 1, 5000), latent_dim=256)
-        >>> VariationalEncoder(build_image_encoder(1, (224, 224)), latent_dim=256)
+        >>> import torch
+        >>> signal = VariationalEncoder(build_signal_encoder("conv", 1, 5000), latent_dim=256)
+        >>> signal(torch.zeros(2, 1, 5000)).mean.shape
+        torch.Size([2, 256])
+        >>> image = VariationalEncoder(build_image_encoder(1, (64, 64)), latent_dim=256)
+        >>> image(torch.zeros(2, 1, 64, 64)).mean.shape
+        torch.Size([2, 256])
 
     Args:
         backbone: A block exposing ``out_dim`` and mapping ``(batch, ...)`` to

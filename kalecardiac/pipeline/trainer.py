@@ -79,7 +79,11 @@ class CardiacTrainer(BaseNNTrainer):
         self.model = model
         self.task = task
         self.grad_clip = float(grad_clip)
-        self._epoch_outputs: dict[str, list[Tensor]] = {}
+        # Scores and targets are held apart rather than stacked into one tensor: a
+        # multiclass task scores each subject with a row of probabilities, which cannot
+        # share a stack with one target value per subject.
+        self._epoch_scores: dict[str, list[Tensor]] = {}
+        self._epoch_targets: dict[str, dict[str, list[Tensor]]] = {}
 
     def forward(self, batch: SubjectBatch):
         """Run the model over every modality the batch carries."""
@@ -120,7 +124,7 @@ class CardiacTrainer(BaseNNTrainer):
         if split_name != "train":
             scores = self.task.scores(output)
             if scores is not None:
-                self._accumulate(split_name, scores.reshape(-1), batch)
+                self._accumulate(split_name, scores, batch)
 
         return loss, {f"{split_name}_{name}": value for name, value in parts.items()}
 
@@ -154,20 +158,30 @@ class CardiacTrainer(BaseNNTrainer):
         return batch.to(self.device)
 
     def _accumulate(self, split_name: str, scores: Tensor, batch: SubjectBatch) -> None:
-        """Hold one batch's predictions and targets until the epoch ends."""
-        rows = [scores.detach().float()]
-        rows += [batch.target[key].detach().float().reshape(-1) for key in self.task.target_keys]
-        self._epoch_outputs.setdefault(split_name, []).append(torch.stack(rows).cpu())
+        """Hold one batch's predictions and targets until the epoch ends.
+
+        ``scores`` is ``(B,)`` for a one-score task and ``(B, K)`` for one that scores
+        each subject per class; either way the leading axis is the subject.
+        """
+        if scores.shape[0] != len(batch):
+            raise ValueError(
+                f"the task scored {scores.shape[0]} subjects in a batch of {len(batch)}; a task's scores() "
+                f"must return one row per subject"
+            )
+        self._epoch_scores.setdefault(split_name, []).append(scores.detach().float().cpu())
+        targets = self._epoch_targets.setdefault(split_name, {})
+        for key in self.task.target_keys:
+            targets.setdefault(key, []).append(batch.target[key].detach().float().reshape(-1).cpu())
 
     def _log_epoch_metric(self, split_name: str) -> None:
         """Compute the task's metric over everything accumulated this epoch."""
-        outputs = self._epoch_outputs.pop(split_name, [])
-        if not outputs:
+        batches = self._epoch_scores.pop(split_name, [])
+        target_batches = self._epoch_targets.pop(split_name, {})
+        if not batches:
             return
 
-        rows = torch.cat(outputs, dim=1)
-        scores, target_rows = rows[0], rows[1:]
-        targets: Mapping[str, Tensor] = dict(zip(self.task.target_keys, target_rows, strict=True))
+        scores = torch.cat(batches, dim=0)
+        targets: Mapping[str, Tensor] = {key: torch.cat(values) for key, values in target_batches.items()}
 
         try:
             value = self.task.metric(scores, targets)

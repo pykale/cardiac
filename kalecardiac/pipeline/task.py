@@ -29,7 +29,7 @@ from collections.abc import Mapping, Sequence
 import torch
 from torch import Tensor, nn
 
-from kalecardiac.evaluate.classification_metrics import MetricError, roc_auc
+from kalecardiac.evaluate.classification_metrics import MetricError, multiclass_roc_auc, roc_auc
 from kalecardiac.evaluate.regression_metrics import r2_score
 from kalecardiac.loaddata.multimodal_access import LABEL_KEY, VALUE_KEY, SubjectBatch
 from kalecardiac.model.predict.heads import LinearHead, MLPHead
@@ -98,11 +98,13 @@ class PredictionTask(nn.Module, ABC):
         """
 
     def scores(self, output) -> Tensor | None:
-        """One score per subject, to accumulate for the epoch metric.
+        """Per-subject scores, to accumulate for the epoch metric.
 
-        ``None`` means there is nothing per-subject to accumulate, and the trainer
-        then reports only the loss for that split. That is the honest answer for a
-        generative task: its quality is the objective itself.
+        ``(B,)`` for a task with one score per subject, ``(B, K)`` for one that scores
+        each subject per class; the leading axis is always the subject. ``None`` means
+        there is nothing per-subject to accumulate, and the trainer then reports only
+        the loss for that split. That is the honest answer for a generative task: its
+        quality is the objective itself.
         """
         return None
 
@@ -110,7 +112,8 @@ class PredictionTask(nn.Module, ABC):
         """Summarise one epoch's accumulated predictions.
 
         Args:
-            scores: ``(N,)`` predictions for the epoch, in accumulation order.
+            scores: The epoch's :meth:`scores`, concatenated along the subject axis in
+                accumulation order -- ``(N,)`` or ``(N, K)``.
             targets: Supervision for the same subjects, keyed by :attr:`target_keys`.
 
         Raises:
@@ -124,8 +127,9 @@ class ClassificationTask(PredictionTask):
     """Predict a categorical endpoint -- a diagnosis, a phenotype, a severity grade.
 
     Binary by default, which is what both cardiac use cases predict. With
-    ``num_classes > 2`` the head widens and the loss becomes softmax cross-entropy;
-    everything else, including the trainer, is unchanged.
+    ``num_classes > 2`` the head widens, the loss becomes softmax cross-entropy, and the
+    epoch metric becomes the macro one-versus-rest ROC-AUC
+    (:func:`~kalecardiac.evaluate.multiclass_roc_auc`); the trainer is unchanged.
 
     Heads emit logits rather than probabilities, because the fused sigmoid-and-log form
     is the numerically stable one and ROC-AUC is unchanged by the sigmoid.
@@ -203,22 +207,22 @@ class ClassificationTask(PredictionTask):
         return value, {"loss": float(value.detach())}
 
     def scores(self, output) -> Tensor:
-        """The positive-class score: the logit when binary, else the positive column.
+        """The positive-class logit ``(B,)`` when binary, else class probabilities ``(B, K)``.
 
-        One number per subject whichever it is, because a ranking metric needs an
-        ordering and not a distribution. For a multiclass endpoint this reports the
-        one-versus-rest AUC of class 1, which is a partial summary -- read the full
-        confusion matrix from :mod:`kalecardiac.evaluate` rather than this.
+        A multiclass endpoint keeps the whole distribution rather than one column of it:
+        scoring only class 1 against the rest would make the monitored metric, and so
+        checkpoint selection, favour distinguishing that one class.
         """
         prediction = output.prediction
-        if prediction.dim() == 2 and prediction.shape[1] > 1:
-            return torch.softmax(prediction, dim=1)[:, 1]
+        if self.num_classes > 2:
+            return torch.softmax(prediction, dim=1)
         return prediction.reshape(-1)
 
     def metric(self, scores: Tensor, targets: Mapping[str, Tensor]) -> float:
+        """ROC-AUC when binary, the macro one-versus-rest ROC-AUC otherwise."""
         labels = targets[LABEL_KEY].numpy()
         if self.num_classes > 2:
-            labels = (labels == 1).astype(float)
+            return multiclass_roc_auc(labels, scores.double().numpy())
         return roc_auc(labels, scores.double().numpy())
 
 

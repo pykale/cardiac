@@ -125,3 +125,12 @@ def test_pipeline_plugs_into_an_image_source(cohort):
     pipeline = build_image_pipeline(size=(16, 16))
     source = ImageArraySource(cohort.image, channels=1, transform=pipeline)
     assert source.get(cohort.subject_id[0], 0).shape == (1, 16, 16)
+
+
+class TestStatisticsAndLength:
+    def test_a_deviation_per_channel_is_required(self):
+        with pytest.raises(ValueError, match="std must have one value per channel \\(2\\), got 1"):
+            standardise_image(np.ones((2, 4, 4)), mean=[0.0, 0.0], std=[1.0])
+
+    def test_a_pipeline_counts_its_steps(self):
+        assert len(ImagePipeline([scale_image, standardise_image])) == 2

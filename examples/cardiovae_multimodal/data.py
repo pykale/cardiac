@@ -31,7 +31,14 @@ from kalecardiac.loaddata import (
     ImageFileSource,
     ModalitySource,
 )
-from kalecardiac.prepdata import SignalPipeline, build_image_pipeline, crop_or_pad, interpolate_missing, standardise
+from kalecardiac.prepdata import (
+    SignalPipeline,
+    build_image_pipeline,
+    crop_or_pad,
+    interpolate_missing,
+    resample,
+    standardise,
+)
 
 logger = logging.getLogger("cardiovae_multimodal")
 
@@ -56,6 +63,7 @@ class CardioVAECohort:
         ecg_length: Samples per channel after preprocessing.
         image_size: ``(height, width)`` after preprocessing.
         synthetic: Whether this cohort was generated rather than read.
+        num_classes: Classes of the endpoint; 2 for a threshold.
     """
 
     sources: dict[str, ModalitySource]
@@ -67,6 +75,7 @@ class CardioVAECohort:
     ecg_length: int
     image_size: tuple[int, int]
     synthetic: bool
+    num_classes: int = 2
 
     def frame(self) -> pd.DataFrame:
         """The table a splitter splits."""
@@ -74,27 +83,49 @@ class CardioVAECohort:
 
     def describe(self) -> str:
         """One line summarising what was assembled."""
-        positives = int(self.table["label"].sum()) if "label" in self.table else 0
         origin = "synthetic" if self.synthetic else "local"
         return (
             f"{origin}: {len(self.pretrain_ids)} subjects for pretraining, {len(self.labelled_ids)} labelled "
-            f"({positives} positive) | ecg {self.ecg_channels}x{self.ecg_length} | cxr {self.image_size}"
+            f"({_balance_text(self.table, self.num_classes)}) | ecg {self.ecg_channels}x{self.ecg_length} | "
+            f"cxr {self.image_size}"
         )
 
 
-def ecg_pipeline(cfg, channels: int) -> SignalPipeline:
-    """Preprocessing for the recordings.
+def source_rate(cfg) -> float:
+    """Rate the recordings arrive at: ``ECG.SOURCE_SAMPLING_RATE``, or the model's own."""
+    return float(cfg.ECG.SOURCE_SAMPLING_RATE or cfg.ECG.SAMPLING_RATE)
 
-    Interpolate dropped samples, force a fixed length, then standardise. The order is
-    not interchangeable: a NaN spreads through everything after it, and statistics taken
+
+def ecg_pipeline(cfg, flatten: bool) -> SignalPipeline:
+    """Preprocessing for the recordings, in the only order that is correct.
+
+    Interpolate dropped samples, resample to the model's rate, flatten the leads if the
+    model reads them as one signal, force a fixed length, then standardise.
+
+    Every step before the flatten is per lead, and has to be. Resampling a flattened
+    strip would interpolate across the join between the end of one lead and the start of
+    the next, inventing samples that belong to neither; interpolating a dropped sample
+    there would fill it from the wrong lead. Statistics go last, because statistics taken
     over samples that are then cropped away describe a recording the model never sees.
+
+    Args:
+        cfg: The run configuration.
+        flatten: Concatenate the leads into one channel, as the reference
+            implementation does. ``ECG.LENGTH`` is then leads times samples per lead.
+
+    Returns:
+        A pipeline to hand to an ECG source's ``transform``.
     """
-    steps = [interpolate_missing, partial(crop_or_pad, length=cfg.ECG.LENGTH)]
+    steps = [interpolate_missing]
+    if source_rate(cfg) != cfg.ECG.SAMPLING_RATE:
+        steps.append(partial(resample, source_rate=source_rate(cfg), target_rate=cfg.ECG.SAMPLING_RATE))
+    if flatten:
+        steps.append(_flatten_leads)
+    steps.append(partial(crop_or_pad, length=cfg.ECG.LENGTH))
     if cfg.ECG.STANDARDISE:
-        # Per channel when the leads are channels; over the whole recording when they
-        # have been flattened into one, where per-channel would standardise the
-        # concatenation as a unit anyway.
-        steps.append(partial(standardise, per_channel=channels > 1))
+        # Per lead while the leads are channels; over the whole strip once flattened,
+        # where there is only one channel left to standardise.
+        steps.append(partial(standardise, per_channel=not flatten))
     return SignalPipeline(steps)
 
 
@@ -128,7 +159,7 @@ def load_local(cfg) -> CardioVAECohort:
         )
 
     table = pd.read_csv(table_path)
-    for column in (SUBJECT_COLUMN, cfg.ENDPOINT.VALUE_COLUMN):
+    for column in (SUBJECT_COLUMN, endpoint_column(cfg)):
         if column not in table.columns:
             raise ValueError(f"{table_path} has no column {column!r}; available: {list(table.columns)}")
     table[SUBJECT_COLUMN] = table[SUBJECT_COLUMN].astype(str)
@@ -140,10 +171,7 @@ def load_local(cfg) -> CardioVAECohort:
         return {path.stem: path for path in sorted(folder.glob("*.npy"))}
 
     ecg_files, cxr_files = files("ecg"), files("cxr")
-    channels = int(cfg.ECG.NUM_CHANNELS)
-    pipeline = ecg_pipeline(cfg, channels)
-    if channels == 1:
-        pipeline = SignalPipeline([_flatten_leads, *pipeline.steps])
+    pipeline = ecg_pipeline(cfg, flatten=int(cfg.ECG.NUM_CHANNELS) == 1)
 
     leads = list(cfg.ECG.LEADS) or ["I"]
     ecg_source = ECGFileSource(
@@ -172,20 +200,22 @@ def load_synthetic(cfg) -> CardioVAECohort:
     generated = make_synthetic_multimodal_data(
         num_subjects=cfg.SYNTHETIC.NUM_SUBJECTS,
         num_samples=cfg.SYNTHETIC.NUM_SAMPLES,
+        # Generated at the rate a real cohort would arrive at, so that a configured
+        # resample is exercised rather than skipped.
+        sampling_rate=source_rate(cfg),
         image_size=tuple(cfg.SYNTHETIC.IMAGE_SIZE),
         image_channels=cfg.IMAGE.CHANNELS,
         seed=cfg.SOLVER.SEED,
     )
 
-    channels = int(cfg.ECG.NUM_CHANNELS)
-    pipeline = ecg_pipeline(cfg, channels)
-    if channels == 1:
-        pipeline = SignalPipeline([_flatten_leads, *pipeline.steps])
+    pipeline = ecg_pipeline(cfg, flatten=int(cfg.ECG.NUM_CHANNELS) == 1)
 
     ecg_source = ECGArraySource(
         generated.ecg,
         leads=generated.leads,
-        sampling_rate=generated.sampling_rate,
+        # The rate of what the source returns, after resampling -- which is what an
+        # attribution or a delineation needs to place a sample in time.
+        sampling_rate=cfg.ECG.SAMPLING_RATE,
         transform=pipeline,
         length=cfg.ECG.LENGTH,
     )
@@ -202,6 +232,12 @@ def load_synthetic(cfg) -> CardioVAECohort:
             cfg.ENDPOINT.VALUE_COLUMN: [generated.values[name] for name in generated.subject_id],
         }
     )
+    if cfg.ENDPOINT.LABEL_COLUMN:
+        # A recorded class, made learnable by binning the same measurement the threshold
+        # would use into equally populated classes.
+        table[cfg.ENDPOINT.LABEL_COLUMN] = pd.qcut(
+            table[cfg.ENDPOINT.VALUE_COLUMN], int(cfg.ENDPOINT.NUM_CLASSES), labels=False
+        )
     return _assemble(cfg, table, {ECG: ecg_source, CXR: image_source}, set(generated.subject_id), synthetic=True)
 
 
@@ -222,18 +258,10 @@ def _assemble(
     if table.empty:
         raise ValueError("no subject survived the join between the cohort table and the modality files")
 
-    # The endpoint: a threshold on the measurement, or the measurement itself. Which
-    # column and which threshold are the registry's, which is why they are configured
-    # here rather than in the library.
-    values = pd.to_numeric(table[cfg.ENDPOINT.VALUE_COLUMN], errors="coerce")
-    known = values.notna()
-    if not bool(known.all()):
-        logger.info("dropping %d subjects with no recorded %s", int((~known).sum()), cfg.ENDPOINT.VALUE_COLUMN)
-        table = table[known].reset_index(drop=True)
-        values = values[known].reset_index(drop=True)
-
-    table["value"] = values.astype(float)
-    table["label"] = (values > cfg.ENDPOINT.THRESHOLD).astype(int)
+    # The endpoint: a class of it, or the measurement itself. Which column and which
+    # threshold are the registry's, which is why they are configured here rather than
+    # in the library.
+    table = derive_endpoint(cfg, table)
     columns = {"value": "value"} if cfg.ENDPOINT.REGRESSION else {"label": "label"}
     target = ColumnTarget(table, columns=columns, id_column=SUBJECT_COLUMN)
 
@@ -253,11 +281,106 @@ def _assemble(
         ecg_length=ecg_source.length,
         image_size=tuple(sources[CXR].size),
         synthetic=synthetic,
+        num_classes=int(cfg.ENDPOINT.NUM_CLASSES),
     )
+
+
+def check_endpoint(cfg) -> None:
+    """Reject an endpoint that cannot be built, before any data is read.
+
+    Raises:
+        ValueError: If the class count, where the class is read from and the task
+            disagree, naming the setting to change.
+    """
+    num_classes = int(cfg.ENDPOINT.NUM_CLASSES)
+    if num_classes < 2:
+        raise ValueError(f"ENDPOINT.NUM_CLASSES must be at least 2, got {num_classes}")
+    if cfg.ENDPOINT.REGRESSION:
+        if cfg.ENDPOINT.LABEL_COLUMN or num_classes != 2:
+            raise ValueError(
+                "ENDPOINT.REGRESSION predicts ENDPOINT.VALUE_COLUMN itself and has no classes; leave "
+                "ENDPOINT.LABEL_COLUMN empty and ENDPOINT.NUM_CLASSES at 2, or set ENDPOINT.REGRESSION False"
+            )
+        return
+    if num_classes > 2 and not cfg.ENDPOINT.LABEL_COLUMN:
+        raise ValueError(
+            f"a threshold on {cfg.ENDPOINT.VALUE_COLUMN} defines two classes, not {num_classes}; set "
+            f"ENDPOINT.LABEL_COLUMN to a column of class indices 0..{num_classes - 1}"
+        )
+    if num_classes > 2 and cfg.OBJECTIVE.POS_WEIGHT > 0:
+        raise ValueError(
+            f"OBJECTIVE.POS_WEIGHT weights the positive class of a binary endpoint, and this one has {num_classes} "
+            f"classes; leave it 0 to weight every class from the training fold, or set it negative for no weighting"
+        )
+
+
+def endpoint_column(cfg) -> str:
+    """The column of the cohort table the endpoint is read from."""
+    return cfg.ENDPOINT.LABEL_COLUMN or cfg.ENDPOINT.VALUE_COLUMN
+
+
+def derive_endpoint(cfg, table: pd.DataFrame) -> pd.DataFrame:
+    """Add the ``label`` and ``value`` columns the endpoint is supervised and stratified on.
+
+    The label is a threshold on ``ENDPOINT.VALUE_COLUMN``, or is read from
+    ``ENDPOINT.LABEL_COLUMN`` where the cohort records the class directly. A subject with
+    no recorded endpoint is dropped rather than assumed negative, and the run logs how
+    many were.
+
+    Raises:
+        ValueError: If no subject has the endpoint, or a recorded class is not one of
+            ``0 .. ENDPOINT.NUM_CLASSES - 1``.
+    """
+    column = endpoint_column(cfg)
+    recorded = pd.to_numeric(table[column], errors="coerce")
+    known = recorded.notna()
+    if not bool(known.all()):
+        logger.info("dropping %d subjects with no recorded %s", int((~known).sum()), column)
+        table = table[known].reset_index(drop=True)
+        recorded = recorded[known].reset_index(drop=True)
+    if table.empty:
+        raise ValueError(f"no subject has a recorded {column}, so there is no endpoint to fine-tune on")
+
+    table = table.copy()
+    if not cfg.ENDPOINT.LABEL_COLUMN:
+        table["value"] = recorded.astype(float)
+        table["label"] = (recorded > cfg.ENDPOINT.THRESHOLD).astype(int)
+        return table
+
+    num_classes = int(cfg.ENDPOINT.NUM_CLASSES)
+    invalid = sorted(set(recorded[(recorded % 1 != 0) | (recorded < 0) | (recorded >= num_classes)].tolist()))
+    if invalid:
+        raise ValueError(
+            f"{column} records {invalid[:5]}, which are not class indices 0..{num_classes - 1}; encode the classes "
+            f"as integers from 0, or set ENDPOINT.NUM_CLASSES to how many there are"
+        )
+    table["label"] = recorded.astype(int)
+    # The measurement, where the table has it, is kept for the record; it does not
+    # supervise a classification read from a column.
+    if cfg.ENDPOINT.VALUE_COLUMN in table:
+        table["value"] = pd.to_numeric(table[cfg.ENDPOINT.VALUE_COLUMN], errors="coerce").astype(float)
+    return table
+
+
+def class_balance(table: pd.DataFrame, num_classes: int) -> dict:
+    """How the labelled subjects divide between the classes, for a record or a log line."""
+    labels = table["label"].to_numpy(dtype=int)
+    if num_classes > 2:
+        return {"class_counts": np.bincount(labels, minlength=num_classes).tolist()}
+    return {"n_positive": int(labels.sum()), "positive_rate": float(labels.mean())}
+
+
+def _balance_text(table: pd.DataFrame, num_classes: int) -> str:
+    """The class balance as a phrase: ``"12 positive"`` or ``"classes 8/8/8"``."""
+    balance = class_balance(table, num_classes)
+    if "class_counts" in balance:
+        return "classes " + "/".join(str(count) for count in balance["class_counts"])
+    return f"{balance['n_positive']} positive"
 
 
 def load_cohort(cfg) -> CardioVAECohort:
     """Read the cohort from disk, or generate one when no root is configured."""
+    check_endpoint(cfg)
     if cfg.DATASET.ROOT:
         return load_local(cfg)
     logger.warning(
@@ -274,8 +397,7 @@ def summarise(cohort: CardioVAECohort, endpoint: str) -> dict:
         "synthetic": cohort.synthetic,
         "n_pretrain": len(cohort.pretrain_ids),
         "n_labelled": len(cohort.labelled_ids),
-        "n_positive": int(cohort.table["label"].sum()),
-        "positive_rate": float(cohort.table["label"].mean()),
+        **class_balance(cohort.table, cohort.num_classes),
         "ecg_shape": [cohort.ecg_channels, cohort.ecg_length],
         "image_size": list(cohort.image_size),
     }

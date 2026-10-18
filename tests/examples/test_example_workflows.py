@@ -152,9 +152,21 @@ class TestCardioVAEExample:
 
     @pytest.mark.slow
     def test_a_regression_endpoint_runs_through_the_same_path(self, tmp_path):
-        cfg = cardiovae_cfg(tmp_path, **{"ENDPOINT.REGRESSION": True})
-        results = cardiovae_runner.run(cfg, arms=[("ecg",)])
+        cfg = cardiovae_cfg(tmp_path, **{"ENDPOINT.REGRESSION": True, "OUTPUT.INTERPRET": True})
+        results = cardiovae_runner.run(cfg, arms=[("ecg",), ("ecg", "cxr")])
         assert "rmse" in results["ecg"]
+        # Ablation is measured in R-squared for a measurement, so it runs here too.
+        interpretation = json.loads((tmp_path / "cardiovae" / "ecg+cxr" / "interpretation.json").read_text("utf-8"))
+        ablation = interpretation["ablation"]
+        assert ablation["drop_ecg"] == pytest.approx(ablation["full"] - ablation["without_ecg"])
+
+    @pytest.mark.slow
+    def test_a_multiclass_endpoint_runs_through_the_same_path(self, tmp_path):
+        cfg = cardiovae_cfg(
+            tmp_path, **{"ENDPOINT.LABEL_COLUMN": "subtype", "ENDPOINT.NUM_CLASSES": 3, "OUTPUT.INTERPRET": True}
+        )
+        results = cardiovae_runner.run(cfg, arms=[("ecg", "cxr")])
+        _assert_three_class_run(results["ecg+cxr"], tmp_path / "cardiovae", "ecg+cxr")
 
 
 class TestLSEMVAEExample:
@@ -260,16 +272,26 @@ class TestLSEMVAEExample:
         assert all(any(f"encoders.{lead}." in key for key in state) for lead in cohort.pretrain_leads)
 
     @pytest.mark.slow
+    def test_a_multiclass_endpoint_runs_through_the_same_path(self, tmp_path):
+        cfg = lsemvae_cfg(
+            tmp_path, **{"ENDPOINT.LABEL_COLUMN": "subtype", "ENDPOINT.NUM_CLASSES": 3, "OUTPUT.INTERPRET": True}
+        )
+        results = lsemvae_runner.run(cfg)
+        _assert_three_class_run(results["I+II"], tmp_path / "lsemvae", "I+II")
+
+    @pytest.mark.slow
     def test_several_lead_groups_are_compared_in_one_run(self, tmp_path):
         cfg = lsemvae_cfg(tmp_path)
         results = lsemvae_runner.run(cfg, lead_groups=[("I",), ("I", "II")])
         assert sorted(results) == ["I", "I+II"]
 
-    @pytest.mark.slow
-    def test_an_unknown_lead_group_is_rejected_by_name(self, tmp_path):
+    def test_an_unknown_lead_group_is_rejected_before_pretraining(self, tmp_path):
+        # It used to be checked inside the fold loop, so a misspelt lead cost a whole
+        # pretraining run before it failed. Now nothing is trained, or even written.
         cfg = lsemvae_cfg(tmp_path)
         with pytest.raises(ValueError, match=r"\['V6'\]"):
             lsemvae_runner.run(cfg, lead_groups=[("V6",)])
+        assert not (tmp_path / "lsemvae").exists()
 
     @pytest.mark.slow
     @pytest.mark.parametrize("fusion", ["poe", "moe", "hime"])
@@ -287,6 +309,27 @@ class TestLSEMVAEExample:
         assert (out / "latent_space.csv").exists()
         assert (out / "lead_agreement.json").exists()
         assert (out / "I+II" / "lead_importance.csv").exists()
+
+
+def _assert_three_class_run(summary, out, arm):
+    """What a three-class run must have produced: per-class scores, macro metrics, counts."""
+    import csv
+
+    assert summary["n_folds"] == 2
+    assert 0.0 <= summary["roc_auc_ovr"]["mean"] <= 1.0
+    assert 0.0 <= summary["balanced_accuracy"]["mean"] <= 1.0
+
+    with (out / arm / "predictions.csv").open(encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    assert {"score_0", "score_1", "score_2"} <= set(rows[0])
+    assert {float(row["label"]) for row in rows} == {0.0, 1.0, 2.0}
+
+    cohort = json.loads((out / "cohort.json").read_text(encoding="utf-8"))
+    assert len(cohort["class_counts"]) == 3 and "n_positive" not in cohort
+
+    # Ablation rescored the multiclass model on every class rather than on one column.
+    interpretation = json.loads((out / arm / "interpretation.json").read_text(encoding="utf-8"))
+    assert 0.0 <= interpretation["ablation"]["full"] <= 1.0
 
 
 class TestExamplesUseTheLibrary:

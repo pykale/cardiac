@@ -28,7 +28,7 @@ kalecardiac/
 ```
 
 The dependency order is the pipeline order, and it is enforced:
-[`tests/test_package_structure.py`](../tests/test_package_structure.py) parses every
+[`tests/test_package_structure.py`](https://github.com/pykale/cardiac/blob/main/tests/test_package_structure.py) parses every
 module and fails if `loaddata` imports `model`, or any stage imports `pipeline`.
 
 ## The boundary that matters most
@@ -245,5 +245,5 @@ KaleCancer also found.
 - [Quickstart](quickstart.md) — running the pipeline
 - [Models](models.md) — CardioVAE, LS-EMVAE, the baselines, and documented departures
 - [Multimodal fusion](multimodal_fusion.md) — the fusion mechanisms and when each applies
-- [API overview](../API_overview.md) — the public API, stage by stage
-- [AGENTS.md](../AGENTS.md) — conventions and constraints for contributors
+- [API overview](https://github.com/pykale/cardiac/blob/main/API_overview.md) — the public API, stage by stage
+- [AGENTS.md](https://github.com/pykale/cardiac/blob/main/AGENTS.md) — conventions and constraints for contributors

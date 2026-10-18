@@ -22,7 +22,9 @@ with NeuroKit2 for anyone who has it.
 modality at inference and measure what the metric loses. It answers a cohort-level
 question where attribution answers a subject-level one, and the two disagreeing is
 informative rather than a bug -- a lead can be heavily attributed and still be
-redundant, if another lead carries the same information.
+redundant, if another lead carries the same information. :func:`progressive_ablation`
+withholds modalities cumulatively instead, which is how a reduced-lead deployment is
+evaluated.
 
 Nothing here plots. Attributions and ratios are returned as arrays and dictionaries, so
 a publication figure -- which is an experiment's concern -- is built in ``examples/``
@@ -35,6 +37,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 
 import numpy as np
 import torch
+from numpy.typing import ArrayLike
 from torch import Tensor, nn
 
 from kalecardiac.evaluate.classification_metrics import MetricError
@@ -56,7 +59,7 @@ def _require_captum():
     return IntegratedGradients
 
 
-def normalise_attribution(attribution: np.ndarray) -> np.ndarray:
+def normalise_attribution(attribution: ArrayLike) -> np.ndarray:
     """Rescale an attribution map to ``[0, 1]``.
 
     Min-max rather than by absolute value, matching the cardiac reference
@@ -178,7 +181,7 @@ def modality_attributions(
     return {name: attributions[index].detach().cpu().numpy() for index, name in enumerate(names)}
 
 
-def attribution_ratio(attribution: np.ndarray, threshold: float = 0.7) -> float:
+def attribution_ratio(attribution: ArrayLike, threshold: float = 0.7) -> float:
     """Fraction of an attribution map above a normalised threshold.
 
     The per-modality summary the LS-EMVAE study reports. It measures *how much* of a
@@ -204,7 +207,7 @@ def attribution_ratio(attribution: np.ndarray, threshold: float = 0.7) -> float:
     return float((normalised >= threshold).mean())
 
 
-def attribution_ratios(attributions: Mapping[str, np.ndarray], threshold: float = 0.7) -> dict[str, dict[str, float]]:
+def attribution_ratios(attributions: Mapping[str, ArrayLike], threshold: float = 0.7) -> dict[str, dict[str, float]]:
     """Attribution ratio per modality, and each modality's share of the total.
 
     The lead-importance table: for a twelve-lead model this is twelve rows saying how
@@ -238,7 +241,7 @@ def attribution_ratios(attributions: Mapping[str, np.ndarray], threshold: float 
 
 
 def segment_attribution_ratios(
-    attribution: np.ndarray,
+    attribution: ArrayLike,
     segments: Mapping[str, Sequence[int]],
     window: int = 20,
     threshold: float = 0.7,
@@ -294,7 +297,7 @@ def segment_attribution_ratios(
     }
 
 
-def ecg_wave_segments(signal: np.ndarray, sampling_rate: float = 500.0) -> dict[str, list[int]]:
+def ecg_wave_segments(signal: ArrayLike, sampling_rate: float = 500.0) -> dict[str, list[int]]:
     """Locate the P, Q, R, S and T waves of a single-lead ECG.
 
     A thin wrapper over NeuroKit2's R-peak detection and wavelet delineation, so that
@@ -382,8 +385,11 @@ def modality_ablation(
             :class:`~kalecardiac.pipeline.CardiacTrainer` or any module with
             ``predict``.
         loader: Yields :class:`~kalecardiac.loaddata.SubjectBatch` batches.
-        metric: Takes ``(targets, scores)`` and returns a float, e.g.
-            :func:`~kalecardiac.evaluate.roc_auc`.
+        metric: Takes ``(targets, scores)`` and returns a float. ``scores`` is what the
+            model predicts, shaped as :func:`~kalecardiac.evaluate.predict_split` shapes
+            it: ``(N,)`` for a one-output model, so
+            :func:`~kalecardiac.evaluate.roc_auc` fits, and ``(N, K)`` logits for a
+            multiclass one, so :func:`~kalecardiac.evaluate.multiclass_roc_auc` does.
         target_key: Which batch target the metric scores against.
         modalities: Which to ablate. ``None`` ablates every modality the *model* reads
             where it declares them, and otherwise every modality the batch carries.
@@ -398,44 +404,130 @@ def modality_ablation(
     Raises:
         ValueError: If the loader yields nothing, or carries no such target.
     """
-    batches = list(loader)
-    if not batches:
-        raise ValueError("the loader yielded no batches")
-    if target_key not in batches[0].target:
-        raise ValueError(f"batches carry no target {target_key!r}; available: {sorted(batches[0].target)}")
+    batches, targets = _materialise(loader, target_key)
+    names = list(modalities) if modalities is not None else _modalities_read(model, batches)
 
-    if modalities is not None:
-        names = list(modalities)
-    else:
-        declared = getattr(getattr(model, "model", model), "modalities", None)
-        names = list(declared) if declared is not None else list(batches[0].modalities)
-    targets = np.concatenate([batch.target[target_key].detach().cpu().numpy().reshape(-1) for batch in batches])
-
-    def score(withhold: str | None) -> np.ndarray:
-        scores = []
-        for batch in batches:
-            if withhold is None:
-                used = batch
-            else:
-                present = dict(batch.present)
-                present[withhold] = torch.zeros_like(present[withhold])
-                used = SubjectBatch(
-                    subject_id=batch.subject_id,
-                    modalities=batch.modalities,
-                    present=present,
-                    target=batch.target,
-                    metadata=batch.metadata,
-                )
-            output = model.predict(used) if hasattr(model, "predict") else model(used.modalities, used.present)
-            scores.append(output.prediction.detach().cpu().reshape(len(used), -1)[:, 0].numpy())
-        return np.concatenate(scores)
-
-    results: dict[str, float] = {"full": float(metric(targets, score(None)))}
+    results: dict[str, float] = {"full": float(metric(targets, _rescore(model, batches, ())))}
     for name in names:
         try:
-            value = float(metric(targets, score(name)))
+            value = float(metric(targets, _rescore(model, batches, (name,))))
         except MetricError:
             continue
         results[f"without_{name}"] = value
         results[f"drop_{name}"] = results["full"] - value
     return results
+
+
+def progressive_ablation(
+    model: nn.Module,
+    loader: Iterable[SubjectBatch],
+    metric: Callable[[np.ndarray, np.ndarray], float],
+    target_key: str,
+    order: Sequence[str],
+) -> list[dict]:
+    """How a model degrades as modalities are withheld one after another.
+
+    :func:`modality_ablation` withholds one modality at a time and asks what each is
+    worth on its own. This withholds them *cumulatively*, in ``order``, and asks how far
+    a model can be pushed before it fails -- the curve a reduced-lead deployment is read
+    from: twelve leads, then six, then the single lead a wearable records. A model that
+    fuses per-lead posteriors should degrade gradually along it; one that reads the
+    leads as stacked channels has no way to represent an absent lead at all.
+
+    Withholding goes through the presence mask, as in :func:`modality_ablation`, so the
+    model sees absent modalities rather than flat recordings.
+
+    Args:
+        model: As for :func:`modality_ablation`.
+        loader: As for :func:`modality_ablation`.
+        metric: As for :func:`modality_ablation`.
+        target_key: Which batch target the metric scores against.
+        order: Modalities to withhold, first to last. At least one modality the model
+            reads must remain once all of them are withheld: a model shown nothing
+            scores its prior, which says nothing about any modality.
+
+    Returns:
+        One record per step, the first with nothing withheld:
+        ``{"step", "withheld", "present", "score"}``, where ``present`` lists the
+        modalities the model reads that were still available. A step whose split cannot
+        be scored is omitted, as in :func:`modality_ablation`.
+
+    Raises:
+        ValueError: If the loader yields nothing, carries no such target, ``order``
+            repeats or names a modality the batches do not carry, or would withhold
+            every modality the model reads.
+    """
+    batches, targets = _materialise(loader, target_key)
+    order = list(order)
+    carried = set(batches[0].modalities)
+    unknown = sorted(set(order) - carried)
+    if unknown:
+        raise ValueError(f"cannot withhold {unknown}: the batches carry {sorted(carried)}")
+    if len(set(order)) != len(order):
+        raise ValueError(f"order names a modality twice: {order}")
+    read = _modalities_read(model, batches)
+    if not set(read) - set(order):
+        raise ValueError(
+            f"order withholds every modality the model reads ({read}); leave at least one present, since a model "
+            f"shown nothing scores its prior"
+        )
+
+    steps = []
+    for step in range(len(order) + 1):
+        withheld = order[:step]
+        try:
+            value = float(metric(targets, _rescore(model, batches, withheld)))
+        except MetricError:
+            continue
+        steps.append(
+            {
+                "step": step,
+                "withheld": withheld,
+                "present": [name for name in read if name not in withheld],
+                "score": value,
+            }
+        )
+    return steps
+
+
+def _materialise(loader: Iterable[SubjectBatch], target_key: str) -> tuple[list[SubjectBatch], np.ndarray]:
+    """Hold every batch, so each rescoring sees the same subjects, and their targets."""
+    batches = list(loader)
+    if not batches:
+        raise ValueError("the loader yielded no batches")
+    if target_key not in batches[0].target:
+        raise ValueError(f"batches carry no target {target_key!r}; available: {sorted(batches[0].target)}")
+    targets = np.concatenate([batch.target[target_key].detach().cpu().numpy().reshape(-1) for batch in batches])
+    return batches, targets
+
+
+def _modalities_read(model: nn.Module, batches: Sequence[SubjectBatch]) -> list[str]:
+    """What the model reads where it declares it, and otherwise what the batches carry."""
+    declared = getattr(getattr(model, "model", model), "modalities", None)
+    return list(declared) if declared is not None else list(batches[0].modalities)
+
+
+def _rescore(model: nn.Module, batches: Sequence[SubjectBatch], withhold: Sequence[str]) -> np.ndarray:
+    """The model's scores with ``withhold`` marked absent for every subject.
+
+    Each batch is copied rather than edited, so a caller can reuse its loader. Scores
+    are shaped as :func:`~kalecardiac.evaluate.predict_split` shapes them.
+    """
+    scores = []
+    for batch in batches:
+        present = dict(batch.present)
+        for name in withhold:
+            present[name] = torch.zeros_like(present[name])
+        used = SubjectBatch(
+            subject_id=batch.subject_id,
+            modalities=batch.modalities,
+            present=present,
+            target=batch.target,
+            metadata=batch.metadata,
+        )
+        output = model.predict(used) if hasattr(model, "predict") else model(used.modalities, used.present)
+        scores.append(output.prediction.detach().cpu().float().reshape(len(used), -1).numpy())
+    stacked = np.concatenate(scores)
+    # Keeping only the first column would score a multiclass model on one class's
+    # logit; squeeze only when there is a single column, as predict_split does.
+    return stacked[:, 0] if stacked.shape[1] == 1 else stacked

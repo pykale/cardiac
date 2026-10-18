@@ -34,7 +34,8 @@ def get_cfg_defaults() -> CfgNode:
     cfg = _package_defaults()
 
     # ---------------------------------------------------------------- data
-    cfg.DATASET.MODALITIES = FINETUNE_LEADS
+    # The modalities here are leads, so they are configured by ECG.LEADS and
+    # ECG.FINETUNE_LEADS below rather than by DATASET.MODALITIES.
     cfg.DATASET.SPLIT_MODE = "cv"
     cfg.DATASET.NUM_FOLDS = 5
     cfg.DATASET.STRATIFY_KEYS = ["label"]
@@ -44,7 +45,6 @@ def get_cfg_defaults() -> CfgNode:
     cfg.ECG.LEADS = PRETRAIN_LEADS
     cfg.ECG.LENGTH = 5000
     cfg.ECG.SAMPLING_RATE = 500
-    cfg.ECG.MODALITY = "lead"
     cfg.ECG.STANDARDISE = True
     cfg.ECG.ENCODER = "conv"
 
@@ -57,9 +57,11 @@ def get_cfg_defaults() -> CfgNode:
     cfg.ECG.DERIVE_MISSING = False
 
     # ---------------------------------------------------------------- model
+    # The only model this example builds; anything else is rejected at start-up.
     cfg.MODEL.NAME = "lsemvae"
     cfg.MODEL.LATENT_DIM = 256
     cfg.MODEL.CHANNELS = [16, 32, 64]
+    cfg.MODEL.KERNEL_SIZE = 3
     cfg.MODEL.HEAD_HIDDEN = [128]
     cfg.MODEL.DROPOUT = 0.5
     cfg.MODEL.FREEZE_ENCODERS = True
@@ -92,7 +94,15 @@ def get_cfg_defaults() -> CfgNode:
     cfg.ENDPOINT.VALUE_COLUMN = "mpap_mmhg"
     cfg.ENDPOINT.THRESHOLD = 20.0
     cfg.ENDPOINT.UNIT = "mmHg"
+    # Predict the measurement itself rather than the threshold applied to it.
     cfg.ENDPOINT.REGRESSION = False
+    # Classes the endpoint has. A threshold defines two; more need LABEL_COLUMN, a column
+    # of class indices 0..NUM_CLASSES-1 that the cohort's table records directly -- a
+    # haemodynamic subtype, say, which takes more than one measurement to define.
+    cfg.ENDPOINT.NUM_CLASSES = 2
+    # Read the class from this column instead of thresholding VALUE_COLUMN. Empty keeps
+    # the threshold.
+    cfg.ENDPOINT.LABEL_COLUMN = ""
 
     # ---------------------------------------------------------------- run
     cfg.SOLVER.SEED = 123
@@ -106,6 +116,17 @@ def get_cfg_defaults() -> CfgNode:
     cfg.FINETUNE.MAX_EPOCHS = 50
     cfg.FINETUNE.BASE_LR = 1e-4
     cfg.FINETUNE.BATCH_SIZE = 32
+
+    # ---------------------------------------------------------------- robustness
+    # Withhold the fine-tuned model's leads one after another at inference, through the
+    # presence mask, and score each step on the test split: the curve a reduced-lead
+    # deployment is read from. Inference only, so it costs one pass per step.
+    cfg.ROBUSTNESS = CfgNode()
+    cfg.ROBUSTNESS.ENABLED = True
+    # Leads withheld first, in this order. Leads it does not name are withheld from the
+    # end of the group backwards, and a group's last lead is never withheld -- so by
+    # default a six-lead model is pushed down to lead I alone, which a wearable records.
+    cfg.ROBUSTNESS.ORDER = []
 
     # ---------------------------------------------------------------- synthetic
     cfg.SYNTHETIC = CfgNode()

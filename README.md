@@ -65,7 +65,7 @@ KaleCardiac enforces the same *standardization* and *minimalism* as PyKale, via 
 
 ### Step 0: Installation
 
-KaleCardiac supports Python 3.10, 3.11, or 3.12. Before installing `kalecardiac`, we suggest you to first [install PyTorch](https://pytorch.org/get-started/locally/) matching your hardware, and then [install PyKale](https://pykale.readthedocs.io/en/latest/installation.html) following its official instructions.
+KaleCardiac supports Python 3.10, 3.11, or 3.12. Before installing `kalecardiac`, we suggest you to first [install PyTorch](https://pytorch.org/get-started/locally/) matching your hardware, and then [install PyKale](https://pykale.readthedocs.io/en/latest/installation.html) following its official instructions. PyKale 0.2 requires `torch<=2.6.0`, so choose a PyTorch 2.6 or earlier build; a newer one would be replaced during installation.
 
 Installation of `kalecardiac` from source:
 
@@ -126,11 +126,11 @@ This is an open-source project welcoming your contributions. You can contribute 
 Run the same checks as CI before opening a pull request:
 
 ```bash
-pip install -e ".[dev,interpret]"
+pip install -e ".[dev,interpret,ecg]"
 pre-commit run --all-files && pytest --cov=kalecardiac
 ```
 
-The test suite needs no data and no network; `pytest -m "not slow"` skips the whole-workflow example runs. Conventions and architectural constraints are documented in [AGENTS.md](https://github.com/pykale/cardiac/blob/main/AGENTS.md), which applies to human and automated contributors alike, and several of them are enforced by [`tests/test_package_structure.py`](https://github.com/pykale/cardiac/blob/main/tests/test_package_structure.py) rather than left to review. See PyKale's [contributing guidelines](https://github.com/pykale/pykale/blob/main/.github/CONTRIBUTING.md) for more details. The participation in this open source project is subject to PyKale's [Code of Conduct](https://github.com/pykale/pykale/blob/main/.github/CODE_OF_CONDUCT.md).
+The test suite needs no data and no network; `pytest -m "not slow"` skips the whole-workflow example runs. Conventions and architectural constraints are documented in [AGENTS.md](https://github.com/pykale/cardiac/blob/main/AGENTS.md), which applies to human and automated contributors alike, and several of them are enforced by [`tests/test_package_structure.py`](https://github.com/pykale/cardiac/blob/main/tests/test_package_structure.py) rather than left to review. The workflow for a change is in [CONTRIBUTING.md](https://github.com/pykale/cardiac/blob/main/CONTRIBUTING.md), and PyKale's [contributing guidelines](https://github.com/pykale/pykale/blob/main/.github/CONTRIBUTING.md) give more detail. The participation in this open source project is subject to PyKale's [Code of Conduct](https://github.com/pykale/pykale/blob/main/.github/CODE_OF_CONDUCT.md).
 
 ## Data and privacy
 

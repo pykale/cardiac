@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 import torch
 
-from kalecardiac.evaluate import roc_auc
+from kalecardiac.evaluate import MetricError, multiclass_roc_auc, roc_auc
 from kalecardiac.interpret import (
     attribution_ratio,
     attribution_ratios,
@@ -14,6 +14,7 @@ from kalecardiac.interpret import (
     modality_ablation,
     modality_attributions,
     normalise_attribution,
+    progressive_ablation,
     segment_attribution_ratios,
 )
 from kalecardiac.model.embed import LSEMVAE, MultimodalPredictor
@@ -273,6 +274,29 @@ class TestModalityAblation:
         results = modality_ablation(trainer, loader_factory(lead_dataset, batch_size=8), roc_auc, "label")
         assert set(results) == {"full", *(f"without_{lead}" for lead in subset), *(f"drop_{lead}" for lead in subset)}
 
+    def test_a_multiclass_model_is_scored_on_every_class(self, cohort, ecg_source, loader_factory):
+        from kalecardiac.loaddata import ColumnTarget, MultimodalDataset, lead_sources
+
+        cuts = np.quantile([cohort.values[name] for name in cohort.subject_id], [1 / 3, 2 / 3])
+        classes = {name: int(np.searchsorted(cuts, cohort.values[name])) for name in cohort.subject_id}
+        dataset = MultimodalDataset(
+            cohort.subject_id, lead_sources(ecg_source), target=ColumnTarget.from_mapping({"label": classes})
+        )
+        vae = LSEMVAE(leads=cohort.leads, length=ecg_source.length, latent_dim=LATENT, channels=(4,))
+        task = ClassificationTask(num_classes=3, hidden_dims=())
+        trainer = CardiacTrainer(MultimodalPredictor(vae.latent_embedders(["I", "II"]), task.build_head), task)
+
+        shapes = []
+
+        def metric(labels, scores):
+            shapes.append(scores.shape)
+            return multiclass_roc_auc(labels, scores)
+
+        results = modality_ablation(trainer, loader_factory(dataset, batch_size=8), metric, "label")
+        assert shapes and all(shape == (len(cohort.subject_id), 3) for shape in shapes)
+        assert 0.0 <= results["full"] <= 1.0
+        assert set(results) == {"full", "without_I", "drop_I", "without_II", "drop_II"}
+
     def test_the_original_batch_is_not_modified(self, predictor, lead_dataset, loader_factory):
         # Withholding is done on a copy, so a caller can reuse its loader afterwards.
         model, task = predictor
@@ -281,3 +305,133 @@ class TestModalityAblation:
         before = batches[0].present["I"].clone()
         modality_ablation(trainer, batches, roc_auc, "label", modalities=["I"])
         assert torch.equal(batches[0].present["I"], before)
+
+
+class TestProgressiveAblation:
+    @pytest.fixture
+    def scored(self, predictor, lead_dataset, loader_factory):
+        model, task = predictor
+        return CardiacTrainer(model, task), list(loader_factory(lead_dataset, batch_size=8))
+
+    def test_withholds_cumulatively_starting_from_nothing(self, scored, cohort):
+        trainer, batches = scored
+        steps = progressive_ablation(trainer, batches, roc_auc, "label", order=["aVF", "aVL", "aVR"])
+        assert [step["withheld"] for step in steps] == [[], ["aVF"], ["aVF", "aVL"], ["aVF", "aVL", "aVR"]]
+        assert steps[-1]["present"] == [lead for lead in cohort.leads if lead not in ("aVF", "aVL", "aVR")]
+
+    def test_its_ends_agree_with_the_one_at_a_time_ablation(self, scored):
+        trainer, batches = scored
+        steps = progressive_ablation(trainer, batches, roc_auc, "label", order=["I", "II"])
+        single = modality_ablation(trainer, batches, roc_auc, "label", modalities=["I"])
+        assert steps[0]["score"] == pytest.approx(single["full"])
+        assert steps[1]["score"] == pytest.approx(single["without_I"])
+
+    def test_each_step_is_the_score_with_exactly_those_leads_absent(self, scored):
+        # Checked against an independent rescoring through the presence mask.
+        trainer, batches = scored
+        steps = progressive_ablation(trainer, batches, roc_auc, "label", order=["I", "II"])
+        labels, scores = [], []
+        for batch in batches:
+            present = {name: mask.clone() for name, mask in batch.present.items()}
+            present["I"].zero_()
+            present["II"].zero_()
+            masked = type(batch)(batch.subject_id, batch.modalities, present, batch.target, batch.metadata)
+            scores.append(trainer.predict(masked).prediction.reshape(-1))
+            labels.append(batch.target["label"])
+        expected = roc_auc(torch.cat(labels).numpy(), torch.cat(scores).numpy())
+        assert steps[2]["score"] == pytest.approx(expected)
+
+    def test_an_empty_order_is_just_the_intact_score(self, scored):
+        trainer, batches = scored
+        steps = progressive_ablation(trainer, batches, roc_auc, "label", order=[])
+        assert len(steps) == 1 and steps[0]["withheld"] == []
+
+    def test_withholding_everything_the_model_reads_is_refused(self, cohort, lead_dataset, loader_factory):
+        vae = LSEMVAE(
+            leads=cohort.leads, length=cohort.ecg[cohort.subject_id[0]].shape[1], latent_dim=LATENT, channels=(4,)
+        )
+        task = ClassificationTask(hidden_dims=())
+        trainer = CardiacTrainer(MultimodalPredictor(vae.latent_embedders(["I", "II"]), task.build_head), task)
+        with pytest.raises(ValueError, match="leave at least one present"):
+            progressive_ablation(trainer, loader_factory(lead_dataset), roc_auc, "label", order=["II", "I"])
+
+    def test_a_modality_the_batches_lack_is_named(self, scored):
+        trainer, batches = scored
+        with pytest.raises(ValueError, match=r"cannot withhold \['V7'\]"):
+            progressive_ablation(trainer, batches, roc_auc, "label", order=["V7"])
+
+    def test_a_repeated_modality_is_refused(self, scored):
+        trainer, batches = scored
+        with pytest.raises(ValueError, match="twice"):
+            progressive_ablation(trainer, batches, roc_auc, "label", order=["I", "I"])
+
+    def test_the_original_batches_are_not_modified(self, scored):
+        trainer, batches = scored
+        before = {name: mask.clone() for name, mask in batches[0].present.items()}
+        progressive_ablation(trainer, batches, roc_auc, "label", order=["I", "II"])
+        assert all(torch.equal(batches[0].present[name], mask) for name, mask in before.items())
+
+    def test_an_empty_loader_is_rejected(self, predictor):
+        model, task = predictor
+        with pytest.raises(ValueError, match="no batches"):
+            progressive_ablation(CardiacTrainer(model, task), [], roc_auc, "label", order=["I"])
+
+
+class TestRefusalsAndOmissions:
+    def test_an_empty_attribution_map_has_no_segment_ratio(self):
+        with pytest.raises(ValueError, match="empty attribution map"):
+            segment_attribution_ratios(np.array([]), {"R": [1]})
+
+    def test_a_delineator_failure_is_reported_as_one_error(self, monkeypatch):
+        # NeuroKit signals an unreadable recording in several ways, an IndexError from
+        # inside its own peak search among them; each reaches the caller the same way.
+        neurokit = pytest.importorskip("neurokit2")
+
+        def fails(*args, **kwargs):
+            raise IndexError("index 0 is out of bounds")
+
+        monkeypatch.setattr(neurokit, "ecg_peaks", fails)
+        with pytest.raises(ValueError, match="no R peak was detected \\(index 0 is out of bounds\\)"):
+            ecg_wave_segments(neurokit.ecg_simulate(duration=4, sampling_rate=250, random_state=0), sampling_rate=250)
+
+    def test_waves_that_cannot_be_delineated_are_reported_with_the_reason(self, monkeypatch):
+        neurokit = pytest.importorskip("neurokit2")
+
+        def fails(*args, **kwargs):
+            raise ValueError("wavelet failed")
+
+        monkeypatch.setattr(neurokit, "ecg_delineate", fails)
+        signal = neurokit.ecg_simulate(duration=10, sampling_rate=500, heart_rate=70, random_state=0)
+        with pytest.raises(ValueError, match="could not be delineated \\(wavelet failed\\)"):
+            ecg_wave_segments(signal, sampling_rate=500)
+
+    @staticmethod
+    def failing_after(calls: int):
+        """A metric that scores the first ``calls`` rescorings and refuses the rest."""
+        seen = []
+
+        def metric(labels, scores):
+            seen.append(1)
+            if len(seen) > calls:
+                raise MetricError("this rescoring cannot be scored")
+            return roc_auc(labels, scores)
+
+        return metric
+
+    def test_a_modality_whose_ablation_cannot_be_scored_is_omitted_not_zeroed(
+        self, predictor, lead_dataset, loader_factory
+    ):
+        model, task = predictor
+        trainer = CardiacTrainer(model, task)
+        results = modality_ablation(
+            trainer, loader_factory(lead_dataset, batch_size=8), self.failing_after(2), "label", modalities=["I", "II"]
+        )
+        assert set(results) == {"full", "without_I", "drop_I"}
+
+    def test_a_step_that_cannot_be_scored_is_omitted_from_the_curve(self, predictor, lead_dataset, loader_factory):
+        model, task = predictor
+        trainer = CardiacTrainer(model, task)
+        steps = progressive_ablation(
+            trainer, loader_factory(lead_dataset, batch_size=8), self.failing_after(2), "label", order=["I", "II"]
+        )
+        assert [step["step"] for step in steps] == [0, 1]

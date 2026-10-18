@@ -68,7 +68,10 @@ class Conv1dEncoder(BaseCNN):
         channels: Output channels of each convolution, one entry per layer.
         kernel_size: Kernel width of every convolution.
         stride: Stride of every convolution. 2 halves the length per layer.
-        padding: Padding of every convolution.
+        padding: Padding of every convolution. ``None`` uses ``kernel_size // 2``,
+            which keeps "stride 2 halves the length" true whatever the kernel -- a
+            fixed padding of 1 is only right for a kernel of 3, and is what the
+            default resolves to there.
         batch_norm: Insert batch normalisation after each convolution. Off by default,
             matching the cardiac reference implementations; worth turning on for a
             deeper stack, where it is what keeps the activations from drifting.
@@ -86,7 +89,7 @@ class Conv1dEncoder(BaseCNN):
         channels: Sequence[int] = (16, 32, 64),
         kernel_size: int = 3,
         stride: int = 2,
-        padding: int = 1,
+        padding: int | None = None,
         batch_norm: bool = False,
         activation: str = "relu",
     ) -> None:
@@ -95,6 +98,11 @@ class Conv1dEncoder(BaseCNN):
             raise ValueError(
                 f"need positive in_channels, length and at least one layer, got {in_channels}, {length}, {list(channels)}"
             )
+        if kernel_size < 1:
+            raise ValueError(f"kernel_size must be positive, got {kernel_size}")
+        padding = kernel_size // 2 if padding is None else padding
+        self.kernel_size = int(kernel_size)
+        self.padding = int(padding)
 
         self.in_channels = int(in_channels)
         self.length = int(length)

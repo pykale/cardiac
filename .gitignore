@@ -27,3 +27,6 @@ lightning_logs/
 # OS
 .DS_Store
 Thumbs.db
+
+# Sphinx output
+docs/_build/

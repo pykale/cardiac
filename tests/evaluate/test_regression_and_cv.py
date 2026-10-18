@@ -180,3 +180,10 @@ class TestPoolFolds:
     def test_no_fold_is_rejected(self):
         with pytest.raises(MetricError, match="at least one fold"):
             pool_folds([])
+
+
+class TestSummariseFoldsWithNamedKeys:
+    def test_a_named_metric_no_fold_reports_is_left_out_rather_than_invented(self):
+        summary = summarise_folds([{"roc_auc": 0.7}, {"roc_auc": 0.8}], keys=["roc_auc", "roc_auc_ovr"])
+        assert summary["roc_auc"]["mean"] == pytest.approx(0.75)
+        assert "roc_auc_ovr" not in summary

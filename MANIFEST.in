@@ -1,0 +1,11 @@
+# The source distribution carries what running the test suite needs: the tests, and the
+# examples they compose. Neither holds data -- every cohort a test uses is generated --
+# and the exclusions below keep anything recording-, image- or checkpoint-shaped out.
+# The wheel is unaffected: it ships the library alone.
+graft tests
+graft examples
+graft docs
+include AGENTS.md API_overview.md
+
+prune outputs
+global-exclude __pycache__ *.py[cod] *.npy *.npz *.pt *.pth *.ckpt *.dcm *.edf *.hea *.dat

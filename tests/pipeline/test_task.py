@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 import torch
 
-from kalecardiac.evaluate import MetricError
+from kalecardiac.evaluate import MetricError, multiclass_roc_auc
 from kalecardiac.loaddata import LABEL_KEY, VALUE_KEY, SubjectBatch
 from kalecardiac.model.embed import PredictionOutput
 from kalecardiac.model.embed.multimodal_vae import VAEOutput, VAEStream
@@ -58,12 +58,37 @@ class TestClassificationTask:
         output = PredictionOutput(prediction=torch.randn(4, 1), representation=torch.randn(4, 8))
         assert task.scores(output).shape == (4,)
 
-    def test_multiclass_scores_are_the_positive_class_probability(self):
+    def test_multiclass_scores_are_a_distribution_per_subject(self):
         task = ClassificationTask(num_classes=3)
         output = PredictionOutput(prediction=torch.randn(4, 3), representation=torch.randn(4, 8))
         scores = task.scores(output)
-        assert scores.shape == (4,)
-        assert bool(((scores >= 0) & (scores <= 1)).all())
+        assert scores.shape == (4, 3)
+        assert torch.allclose(scores.sum(dim=1), torch.ones(4))
+
+    def test_the_multiclass_metric_scores_every_class_not_only_class_one(self):
+        # Class 1 is ranked perfectly against the rest, classes 0 and 2 backwards.
+        # Scoring class 1 alone would report 1.0 and pick checkpoints that only
+        # separate class 1; the macro area weighs all three.
+        labels = torch.tensor([0.0, 0.0, 1.0, 1.0, 2.0, 2.0])
+        scores = torch.tensor(
+            [
+                [0.10, 0.10, 0.80],
+                [0.10, 0.10, 0.80],
+                [0.05, 0.90, 0.05],
+                [0.05, 0.90, 0.05],
+                [0.80, 0.10, 0.10],
+                [0.80, 0.10, 0.10],
+            ]
+        )
+        auc = ClassificationTask(num_classes=3).metric(scores, {LABEL_KEY: labels})
+        assert auc < 1.0
+        assert auc == pytest.approx(multiclass_roc_auc(labels.numpy(), scores.numpy()))
+
+    def test_a_multiclass_split_missing_a_class_raises_a_metric_error(self):
+        task = ClassificationTask(num_classes=3)
+        scores = torch.softmax(torch.randn(4, 3), dim=1)
+        with pytest.raises(MetricError, match="absent"):
+            task.metric(scores, {LABEL_KEY: torch.tensor([0.0, 1.0, 0.0, 1.0])})
 
     def test_the_metric_is_an_auc(self):
         task = ClassificationTask()
@@ -194,3 +219,11 @@ class TestReconstructionTask:
     def test_asking_for_an_epoch_metric_raises_a_metric_error(self, output):
         with pytest.raises(MetricError, match="no epoch metric"):
             ReconstructionTask().metric(torch.zeros(4), {})
+
+
+class TestRegressionHead:
+    def test_the_head_has_a_hidden_layer_by_default(self):
+        assert isinstance(RegressionTask().build_head(8), MLPHead)
+
+    def test_the_head_is_linear_without_hidden_widths(self):
+        assert isinstance(RegressionTask(hidden_dims=()).build_head(8), LinearHead)

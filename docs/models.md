@@ -121,8 +121,13 @@ CardioVAE(
     image_channels=1,
     image_size=(224, 224),
     latent_dim=256,
+    fusion="poe",  # the published model; "moe", "mean", "barycenter", "hime" ablate it
 )
 ```
+
+The fusion is an argument here exactly as it is for `LSEMVAE`, so ablating CardioVAE's
+product of experts is `FUSION.LATENT_METHOD moe` in the example rather than another
+model. `kernel_size` sets both convolutional encoders, as `MODEL.KERNEL_SIZE`.
 
 | Component | Where it is |
 | --- | --- |

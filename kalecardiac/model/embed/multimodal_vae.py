@@ -300,9 +300,17 @@ class MultimodalVAE(nn.Module):
     def latent_embedders(self, modalities: Mapping[str, Tensor] | None = None, frozen: bool = True) -> dict:
         """Wrap this model's encoders as embedders, for fine-tuning onto an endpoint.
 
-        The step between pretraining and prediction, in one call::
+        The step between pretraining and prediction, in one call -- here fine-tuning on
+        two of the three leads a model was pretrained on::
 
-            >>> predictor = MultimodalPredictor(vae.latent_embedders(), task.build_head)
+            >>> from kalecardiac.model.embed import LSEMVAE, MultimodalPredictor
+            >>> from kalecardiac.model.predict import LinearHead
+            >>> vae = LSEMVAE(leads=["I", "II", "III"], length=512, latent_dim=8, channels=(4,), num_groups=2)
+            >>> predictor = MultimodalPredictor(vae.latent_embedders(["I", "II"]), lambda width: LinearHead(width, 1))
+            >>> predictor.fused_dim
+            16
+
+        In a workflow the head factory is a task's, ``task.build_head``.
 
         Args:
             modalities: Which modalities to expose, keyed as the model names them; the

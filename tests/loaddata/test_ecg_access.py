@@ -250,3 +250,33 @@ class TestLeadSources:
 
     def test_an_untransformed_source_splits_by_lead(self, ecg_source):
         assert ecg_source.splits_by_lead is True
+
+
+class TestEdgesAndDescriptions:
+    def test_a_three_dimensional_recording_is_refused(self):
+        with pytest.raises(ECGFormatError, match="expected a 2-D"):
+            as_lead_array(np.zeros((2, 3, 4)), 2)
+
+    def test_an_empty_source_takes_its_shape_from_the_declaration(self):
+        source = ECGArraySource({}, leads=["I", "II"], length=50)
+        assert (source.channels, source.length) == (2, 50)
+        assert source.placeholder().shape == (2, 50)
+
+    def test_a_torch_file_is_read_by_the_default_loader(self, tmp_path):
+        path = tmp_path / "s1.pt"
+        torch.save(torch.arange(10, dtype=torch.float32).reshape(2, 5), path)
+        source = ECGFileSource({"s1": path}, leads=["I", "II"])
+        assert torch.equal(source.get("s1", 0), torch.arange(10, dtype=torch.float32).reshape(2, 5))
+
+    def test_a_lead_placeholder_is_one_lead_long(self):
+        source = ECGArraySource({"s1": np.zeros((2, 50))}, leads=["I", "II"])
+        assert LeadSource(source, "II").placeholder().shape == (1, 50)
+
+    def test_sources_describe_their_leads_shape_and_rate(self, tmp_path):
+        source = ECGArraySource({"s1": np.zeros((2, 50))}, leads=["I", "II"], sampling_rate=250)
+        assert repr(source) == "ECGArraySource(1 subjects | leads=['I', 'II'] | shape=2x50 | 250 Hz)"
+        assert repr(LeadSource(source, "ii")) == f"LeadSource(II of {source!r})"
+
+        np.save(tmp_path / "s1.npy", np.zeros((2, 50), dtype=np.float32))
+        files = ECGFileSource({"s1": tmp_path / "s1.npy"}, leads=["I", "II"])
+        assert repr(files).startswith("ECGFileSource(1 subjects | leads=['I', 'II']")

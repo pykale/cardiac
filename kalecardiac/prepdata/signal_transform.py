@@ -257,7 +257,11 @@ class SignalPipeline:
     modality is one value that can be built from configuration, logged and compared::
 
         >>> pipeline = SignalPipeline([interpolate_missing, partial(crop_or_pad, length=5000), standardise])
-        >>> ECGArraySource(recordings, leads=LEADS, transform=pipeline)
+        >>> recording = np.random.default_rng(0).normal(size=(12, 4000))
+        >>> pipeline(recording).shape
+        (12, 5000)
+
+    and is handed to a source as ``ECGArraySource(recordings, leads=..., transform=pipeline)``.
 
     Composition rather than a class hierarchy: every step is an ordinary function of
     one array, so a caller can add their own without implementing anything.

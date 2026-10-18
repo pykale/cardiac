@@ -36,6 +36,9 @@ python -m examples.cardiovae_multimodal.main --arms ecg,cxr,ecg+cxr
 
 # Predict the measurement itself rather than a threshold on it
 python -m examples.cardiovae_multimodal.main ENDPOINT.REGRESSION True
+
+# A graded endpoint the cohort table records directly, e.g. a haemodynamic subtype
+python -m examples.cardiovae_multimodal.main ENDPOINT.LABEL_COLUMN subtype ENDPOINT.NUM_CLASSES 3
 ```
 
 With `DATASET.ROOT` empty the run generates its cohort. That verifies the pipeline
@@ -57,12 +60,13 @@ supplying their own path.
     └── <subject_id>.npy    (height, width) or (channels, height, width) float array
 ```
 
-`cohort.csv` needs two columns, and may carry any others:
+`cohort.csv` needs an identifier and an endpoint column, and may carry any others:
 
 | Column | Meaning |
 | --- | --- |
 | `subject_id` | Matches the recording and image filenames |
 | `ENDPOINT.VALUE_COLUMN` | The measurement the endpoint thresholds, e.g. a mean pulmonary arterial pressure in mmHg |
+| `ENDPOINT.LABEL_COLUMN` | Optional, instead of a threshold: a class the table records directly, as integers `0` to `ENDPOINT.NUM_CLASSES - 1` |
 
 Subjects with a recording and an image but no row in the table still take part in
 **pretraining** — that asymmetry is the point of the method. Subjects with no recorded
@@ -87,6 +91,13 @@ directory prepared from those, or pretrain separately and load the checkpoint wi
 | `MODEL.FREEZE_ENCODERS` | Freeze the pretrained encoders while fine-tuning, as the paper does on a small labelled cohort |
 | `ENDPOINT.THRESHOLD` | The clinical cut-off applied to the measurement |
 | `ENDPOINT.REGRESSION` | Predict the measurement rather than the threshold |
+| `ENDPOINT.NUM_CLASSES` | Classes of the endpoint. Above two the head widens, the loss is a softmax cross-entropy weighted from each training fold, and folds are scored by the macro one-versus-rest ROC-AUC |
+| `ENDPOINT.LABEL_COLUMN` | Read the class from this column instead of thresholding the measurement. Required for more than two classes, since a threshold makes two |
+| `DATASET.MODALITIES` | Which modalities are compared when `--arms` is not given: each alone, then all fused |
+| `ECG.SOURCE_SAMPLING_RATE` | The rate your recordings arrive at, if not `ECG.SAMPLING_RATE`. Resampled **per lead, before flattening**, so no sample is interpolated across the join between two leads |
+| `MODEL.KERNEL_SIZE` | Kernel width of both convolutional encoders |
+| `FUSION.LATENT_METHOD` | `poe` is the published model; `moe`, `mean`, `barycenter` and `hime` are ablations of it |
+| `MODEL.PRETRAINED` | A checkpoint to start from. Pretraining is skipped and these weights are loaded, strictly — one saved from another architecture fails rather than half-loading |
 
 ## Outputs
 
@@ -101,6 +112,10 @@ directory prepared from those, or pretrain separately and load the checkpoint wi
     ├── metrics.json        per-fold metrics and their summary
     └── interpretation.json attribution shares and modality ablation
 ```
+
+The ablation in `interpretation.json` withholds each modality in turn and rescores the
+last fold's test split, in the endpoint's threshold-free metric: ROC-AUC, the macro
+one-versus-rest ROC-AUC for a graded endpoint, or R² for a measurement.
 
 ## Reading the numbers
 

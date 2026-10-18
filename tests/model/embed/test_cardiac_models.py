@@ -101,6 +101,33 @@ class TestCardioVAE:
         batch = {"signal": torch.randn(2, 1, LENGTH), "image": torch.rand(2, 1, *IMAGE)}
         assert model(batch).posterior.mean.shape == (2, LATENT)
 
+    def test_the_kernel_reaches_both_encoders(self):
+        model = CardioVAE(signal_length=LENGTH, image_size=IMAGE, latent_dim=LATENT, channels=(4,), kernel_size=5)
+        assert model.kernel_size == 5
+        assert model.encoders["signal"].backbone.kernel_size == 5
+        assert model.encoders["image"].backbone.kernel_size == 5
+
+    def test_the_default_kernel_is_the_published_one(self, cardiovae):
+        assert cardiovae.encoders["signal"].backbone.kernel_size == 3
+        assert cardiovae.encoders["signal"].backbone.padding == 1
+
+    def test_the_kernel_does_not_change_the_decoders(self):
+        # The decoder kernel is fixed by exact upsampling, not by MODEL.KERNEL_SIZE.
+        three = CardioVAE(signal_length=LENGTH, image_size=IMAGE, latent_dim=LATENT, channels=(4,), kernel_size=3)
+        five = CardioVAE(signal_length=LENGTH, image_size=IMAGE, latent_dim=LATENT, channels=(4,), kernel_size=5)
+        assert sum(p.numel() for p in three.decoders.parameters()) == sum(p.numel() for p in five.decoders.parameters())
+
+    @pytest.mark.parametrize("fusion", ["moe", "mean", "barycenter", "hime"])
+    def test_fusion_ablations_are_constructor_arguments(self, fusion):
+        model = CardioVAE(signal_length=LENGTH, image_size=IMAGE, latent_dim=LATENT, channels=(4,), fusion=fusion)
+        batch = {"signal": torch.randn(2, 1, LENGTH), "image": torch.rand(2, 1, *IMAGE)}
+        assert model.fusion_name == fusion
+        assert torch.isfinite(model(batch).posterior.mean).all()
+
+    def test_an_unknown_fusion_is_rejected(self):
+        with pytest.raises(KeyError, match="unknown latent fusion"):
+            CardioVAE(signal_length=LENGTH, image_size=IMAGE, latent_dim=LATENT, fusion="nonexistent")
+
 
 class TestLSEMVAE:
     def test_is_a_configuration_of_the_generic_model(self, lsemvae):
@@ -160,6 +187,17 @@ class TestLSEMVAE:
         output = lsemvae(batch)
         assert output.posterior.mean.shape == (3, LATENT)
         assert sorted(output.modality_posteriors) == ["I", "II", "aVF"]
+
+    def test_the_kernel_reaches_every_lead_encoder(self):
+        model = LSEMVAE(leads=LIMB_LEADS, length=LENGTH, latent_dim=LATENT, channels=(4,), kernel_size=7)
+        assert model.kernel_size == 7
+        assert {model.encoders[lead].backbone.kernel_size for lead in model.leads} == {7}
+
+    def test_the_kernel_is_ignored_by_a_pooling_backbone(self):
+        # A transformer has no convolution kernel to set; the argument must not break it.
+        model = LSEMVAE(leads=["I", "II"], length=LENGTH, latent_dim=LATENT, encoder="transformer", kernel_size=7)
+        batch = {lead: torch.randn(2, 1, LENGTH) for lead in ("I", "II")}
+        assert model(batch).posterior.mean.shape == (2, LATENT)
 
 
 class TestTwelveToSixLeadTransfer:

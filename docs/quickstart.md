@@ -211,4 +211,4 @@ pytest -m "not slow"
 - [architecture.md](architecture.md) — why the package is shaped this way
 - [models.md](models.md) — what each model contributes, and where it departs from its source
 - [multimodal_fusion.md](multimodal_fusion.md) — the fusion mechanisms, and choosing one
-- [API_overview.md](../API_overview.md) — the public API, stage by stage
+- [API_overview.md](https://github.com/pykale/cardiac/blob/main/API_overview.md) — the public API, stage by stage

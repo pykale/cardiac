@@ -1,0 +1,60 @@
+name: Feature request
+description: Propose a new capability, or a change to an existing one
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What can you not do today, and in what workflow did you need it?
+    validations:
+      required: true
+
+  - type: dropdown
+    id: stage
+    attributes:
+      label: Where it belongs
+      description: Which pipeline stage would hold it? If it names a dataset or an experiment, it belongs in an example.
+      options:
+        - loaddata
+        - prepdata
+        - model (layers, embed or predict)
+        - pipeline
+        - evaluate
+        - interpret
+        - utils or config
+        - an example
+        - documentation
+        - not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What the API would look like. A constructor argument beats a new class where one will do.
+    validations:
+      required: true
+
+  - type: textarea
+    id: second-user
+    attributes:
+      label: Who else would use it
+      description: >-
+        KaleCardiac adds an abstraction only when it has a second user. Name the second
+        workflow, model or modality that would need this.
+
+  - type: textarea
+    id: pykale
+    attributes:
+      label: Overlap with PyKale
+      description: Does PyKale already provide this, or should it live there instead?
+
+  - type: checkboxes
+    id: no-patient-data
+    attributes:
+      label: Data
+      options:
+        - label: This request contains no patient data, identifiers or paths from a clinical system.
+          required: true

@@ -53,6 +53,9 @@ python -m examples.lsemvae_ecg.main FUSION.LATENT_METHOD poe        # no mixture
 python -m examples.lsemvae_ecg.main FUSION.LATENT_METHOD moe        # no product step
 python -m examples.lsemvae_ecg.main OBJECTIVE.ALIGNMENT_WEIGHT 0.0  # no latent alignment
 python -m examples.lsemvae_ecg.main MODEL.SHARED_DECODER False      # a decoder per lead
+
+# A graded endpoint the cohort table records directly, rather than a threshold
+python -m examples.lsemvae_ecg.main ENDPOINT.LABEL_COLUMN subtype ENDPOINT.NUM_CLASSES 3
 ```
 
 With `DATASET.ROOT` empty the run generates both cohorts. That verifies the pipeline
@@ -73,12 +76,13 @@ layout below.
     └── <subject_id>.npy         (num_leads, num_samples), labelled, ECG.LEADS
 ```
 
-`cohort.csv` needs two columns, and may carry any others:
+`cohort.csv` needs an identifier and an endpoint column, and may carry any others:
 
 | Column | Meaning |
 | --- | --- |
 | `subject_id` | Matches the recording filenames under `finetune/` |
 | `ENDPOINT.VALUE_COLUMN` | The measurement the endpoint thresholds, e.g. a mean pulmonary arterial pressure in mmHg |
+| `ENDPOINT.LABEL_COLUMN` | Optional, instead of a threshold: a class the table records directly, as integers `0` to `ENDPOINT.NUM_CLASSES - 1` |
 
 The two directories are deliberately separate: pretraining consumes the large
 unlabelled set, fine-tuning the small labelled one, and keeping them apart is what
@@ -104,6 +108,13 @@ what prevents that.
 | `MODEL.SHARED_DECODER` | One decoder for every lead, which forces the latent to carry lead-agnostic cardiac state |
 | `OBJECTIVE.ALIGNMENT_WEIGHT` | Pulls each lead's posterior towards the joint one, which is what makes fine-tuning on a lead subset work |
 | `ENDPOINT.THRESHOLD` | The clinical cut-off applied to the measurement |
+| `ENDPOINT.NUM_CLASSES` | Classes of the endpoint. Above two the head widens, the loss is a softmax cross-entropy weighted from each training fold, and folds are scored by the macro one-versus-rest ROC-AUC |
+| `ENDPOINT.LABEL_COLUMN` | Read the class from this column instead of thresholding the measurement. Required for more than two classes, since a threshold makes two |
+| `ECG.SOURCE_SAMPLING_RATE` | The rate your recordings arrive at, if not `ECG.SAMPLING_RATE`; each lead is resampled before cropping |
+| `MODEL.KERNEL_SIZE` | Kernel width of every lead encoder |
+| `MODEL.PRETRAINED` | A twelve-lead checkpoint to start from. Pretraining is skipped, and fine-tuning reads whichever subset `ECG.FINETUNE_LEADS` names |
+| `ROBUSTNESS.ENABLED` | Score each fold's test split again with one lead fewer at each step, down to one lead |
+| `ROBUSTNESS.ORDER` | Leads withheld first, in this order. The rest go from the end of the group backwards, so by default a group is reduced towards lead I |
 
 Lead order matters to `hime`, because grouping is contiguous over the expert axis: the
 conventional order puts the limb leads in the early groups and the precordial leads in
@@ -123,6 +134,7 @@ choice worth stating.
 └── <leads>/
     ├── predictions.csv      one row per subject per fold
     ├── metrics.json         per-fold metrics and their summary
+    ├── robustness.csv       the score with one lead fewer at each step, per fold
     ├── lead_importance.csv  attribution ratio and share per lead
     └── interpretation.json  the same, with the ablation
 ```
@@ -141,6 +153,27 @@ the metric loses when the lead is withheld entirely.
 The two can disagree, and the disagreement is informative rather than a bug. A lead can
 be heavily attributed and still be redundant, because another lead carries the same
 information; that is expected of leads which are, after all, projections of one signal.
+
+Both are measured in the endpoint's threshold-free metric: ROC-AUC for a binary
+endpoint, the macro one-versus-rest ROC-AUC for a graded one, and R² for a measurement.
+
+## Reading the robustness curve
+
+`robustness.csv` answers the deployment question: how far can the fine-tuned model be
+pushed when leads are missing *at inference*? Each fold's test split is scored with the
+group's leads, then with one fewer, down to one; step 0 withholds nothing, so it is the
+fold's reported score. Leads are withheld through the presence mask, which for this
+model means an absent expert — exactly what a recorder that never captured the lead
+produces — rather than a flat line.
+
+It complements the ablation in `interpretation.json`, which withholds one lead at a time
+and asks what each is worth alone. A curve that stays flat for several steps says the
+leads withheld so far were redundant given the others; a step where it falls says which
+lead the model could not do without, *given the leads before it had already gone*.
+
+Comparing curves is meaningful only within a run, on the same folds. A model fine-tuned
+on fewer leads — another `--leads` group — is a different model, and its score is in
+`results.csv`.
 
 ## Attribution
 

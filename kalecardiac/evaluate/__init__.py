@@ -20,6 +20,7 @@ from kalecardiac.evaluate.classification_metrics import (
     binary_metrics,
     mean_roc_curve,
     multiclass_metrics,
+    multiclass_roc_auc,
     roc_auc,
     sensitivity_specificity,
 )
@@ -34,6 +35,7 @@ __all__ = [
     "bootstrap_ci",
     "mean_roc_curve",
     "multiclass_metrics",
+    "multiclass_roc_auc",
     "pool_folds",
     "predict_split",
     "r2_score",

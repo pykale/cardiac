@@ -196,7 +196,8 @@ MultimodalVAE(encoders, decoders, latent_dim, fusion="poe", use_prior=True, **fu
 `VAEOutput` carries `joint` (a `VAEStream`), `unimodal`, `modality_posteriors` and
 `present`, with `.posterior` and `.latent` as shorthands for the joint.
 
-Named configurations: `CardioVAE(...)` and `LSEMVAE(leads=..., ...)`.
+Named configurations: `CardioVAE(..., fusion="poe")` and `LSEMVAE(leads=..., fusion="hime")`. Both take
+`fusion`, `use_prior` and `kernel_size`, so an ablation is an argument rather than a model.
 
 ### Discriminative model
 
@@ -242,7 +243,7 @@ early-stopping callback without knowing which way the metric runs.
 | Task | Supervises on | Metric |
 | --- | --- | --- |
 | `ReconstructionTask(weights, scale_factor, annealing_epochs, alignment_weight, unimodal_streams, kinds, free_bits)` | The batch's own modalities — **no labels** | The objective |
-| `ClassificationTask(num_classes=2, pos_weight, class_weight, hidden_dims, dropout)` | `label` | ROC-AUC |
+| `ClassificationTask(num_classes=2, pos_weight, class_weight, hidden_dims, dropout)` | `label` | ROC-AUC; macro one-versus-rest above two classes |
 | `RegressionTask(hidden_dims, dropout)` | `value` | R² |
 
 A task decides exactly four things: the head, the loss, what the model is asked to
@@ -258,7 +259,8 @@ new trainer.
 | `roc_auc(labels, scores)` | The area |
 | `sensitivity_specificity(labels, scores, threshold)` | The clinical pair |
 | `binary_metrics(labels, scores, threshold)` | Counts, ranking metrics, threshold metrics and the confusion matrix, JSON-ready |
-| `multiclass_metrics(labels, probabilities, class_names)` | The same for several classes |
+| `multiclass_roc_auc(labels, scores)` | Macro one-versus-rest area: every class weighs the same, however rare |
+| `multiclass_metrics(labels, scores, class_names)` | Accuracy, balanced accuracy, macro F1, the macro area and the confusion matrix |
 | `mean_roc_curve(labels_per_run, scores_per_run)` | Curves interpolated onto a shared grid, with a variability band |
 | `r2_score`, `regression_metrics(targets, predictions, unit)` | RMSE, MAE, signed bias and R², in the endpoint's units |
 | `predict_split(model, loader, split, fold)` | A `SplitPredictions`, traceable by `subject_id` |
@@ -269,6 +271,10 @@ new trainer.
 
 `MetricError` is raised where a metric cannot be computed — a one-class split, say —
 which a trainer treats as "skip this epoch's metric" rather than a failure.
+
+Scores may be logits or probabilities throughout. A multiclass metric applies the
+softmax itself where the scores are not already a distribution, because unlike a
+binary ranking, a one-versus-rest ranking is changed by it.
 
 ---
 
@@ -281,7 +287,8 @@ which a trainer treats as "skip this epoch's metric" rather than a failure.
 | `attribution_ratios(attributions, threshold)` | Per modality, with each one's share — the lead-importance table |
 | `segment_attribution_ratios(attribution, segments, window, threshold)` | Which part of the cardiac cycle |
 | `ecg_wave_segments(signal, sampling_rate)` | Where P, Q, R, S and T are (needs `[ecg]`) |
-| `modality_ablation(model, loader, metric, target_key, modalities=None)` | What the metric loses when a modality is withheld |
+| `modality_ablation(model, loader, metric, target_key, modalities=None)` | What the metric loses when a modality is withheld. The metric sees `(N,)` scores, or `(N, K)` logits for a multiclass model |
+| `progressive_ablation(model, loader, metric, target_key, order)` | How the metric degrades as modalities are withheld cumulatively — the reduced-lead deployment curve |
 | `collect_latents(model, loader, per_modality=False)` | The learned representation over a cohort |
 | `latent_embedding(features, method="pca"|"umap", ...)` | A low-dimensional projection of it |
 | `normalise_attribution(attribution)` | Min-max rescaling, with its caveat documented |
@@ -296,6 +303,10 @@ Everything returns arrays and dictionaries. Nothing plots.
 `load_checkpoint(path, model, strict)` — which unwraps a `torch.compile` or Lightning
 prefix, so loading a pretrained cardiac model is one line rather than a key-mangling
 dictionary comprehension.
+
+`preserve_rng_state()` is a context manager for work that only reports — an ablation, an
+attribution, a latent projection. Every DataLoader pass draws from PyTorch's generator,
+so without it, turning a report on or off would change every model trained after it.
 
 `get_cfg_defaults()` returns the YACS schema; `parse_weights(["ecg:10", "cxr:1"])` reads
 per-modality weights, which are pairs because the modality names belong to the dataset

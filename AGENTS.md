@@ -5,13 +5,15 @@ read [README.md](README.md) and [docs/architecture.md](docs/architecture.md).
 
 ## Setup
 
-Python 3.10–3.12 is required. Install PyTorch first if a specific CUDA build is needed,
-then:
+Python 3.10–3.12 is required. Install PyTorch first if a specific CUDA build is needed —
+PyKale 0.2 requires `torch<=2.6.0`, so a newer build would be replaced — then:
 
 ```bash
 python -m venv .venv
-.venv/bin/pip install -e ".[dev,interpret]"     # Windows: .venv/Scripts/pip
+.venv/bin/pip install -e ".[dev,interpret,ecg]"     # Windows: .venv/Scripts/pip
 ```
+
+`interpret` and `ecg` are the extras the tests exercise; without them a few tests skip.
 
 Verify the install:
 
@@ -23,12 +25,13 @@ Verify the install:
 
 | Task | Command |
 | --- | --- |
-| Run tests | `.venv/bin/pytest` |
+| Run tests, including the library's doctests | `.venv/bin/pytest` |
 | Run tests, skipping the whole-workflow runs | `.venv/bin/pytest -m "not slow"` |
 | Run tests with coverage | `.venv/bin/pytest --cov=kalecardiac --cov-report=term-missing` |
 | Format | `.venv/bin/ruff format .` |
 | Lint | `.venv/bin/ruff check .` |
 | Run an example end to end | `.venv/bin/python -m examples.lsemvae_ecg.main --cfg examples/lsemvae_ecg/configs/quick.yaml` |
+| Build the documentation | `.venv/bin/pip install -r docs/requirements.txt`, then `.venv/bin/sphinx-build -W --keep-going -b html docs docs/_build/html` |
 
 Both `pre-commit run --all-files` (ruff, ruff-format, mypy) and `pytest` must pass before
 a change is complete. These are the same checks CI runs.
@@ -212,7 +215,10 @@ structure, running the pipeline, and reporting.
 2. Export it from that subpackage's `__init__.py`.
 3. Add tests in the mirrored `tests/` path, using synthetic data.
 4. Add any new setting to `kalecardiac/config.py` with a comment saying why it exists.
-5. Run the format, lint and test commands above.
+5. A new module needs an `automodule` entry in the matching `docs/kalecardiac.<stage>.rst`;
+   `tests/test_docs.py` fails until it has one.
+6. Record the change in `CHANGELOG.md` under *Unreleased*.
+7. Run the format, lint and test commands above.
 
 Before adding an abstraction, check it has a second user. This package has no protocol
 with one implementation, no registry with one entry, and no factory that exists for

@@ -1,0 +1,47 @@
+name: Bug report
+description: Something in KaleCardiac does not work as documented
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Do not include patient data.** No recordings, images, identifiers, labels, file
+        paths from a clinical system or screenshots of records -- not even "anonymised"
+        ones. Reproduce the problem on a synthetic cohort from `examples/synthetic_data.py`;
+        if it only appears on your data, vary the generator's arguments until it shows.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened, and what you expected
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction on synthetic data
+      description: The smallest code that shows the problem, building its cohort with `examples/synthetic_data.py`.
+      render: python
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: >-
+        The output of
+        `python -c "import kalecardiac, torch, kale; print(kalecardiac.__version__, torch.__version__, kale.__version__)"`,
+        and your operating system and Python version.
+      render: text
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: no-patient-data
+    attributes:
+      label: Data
+      options:
+        - label: This report contains no patient data, identifiers or paths from a clinical system.
+          required: true

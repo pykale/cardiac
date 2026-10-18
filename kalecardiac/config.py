@@ -66,16 +66,14 @@ _C.ECG.LEADS = []
 _C.ECG.LENGTH = 5000
 _C.ECG.SAMPLING_RATE = 500
 # Rate the recordings arrive at, when it differs from SAMPLING_RATE and they must be
-# resampled. 0 means they already arrive at SAMPLING_RATE.
+# resampled. 0 means they already arrive at SAMPLING_RATE. Resampling runs per lead,
+# before any reshaping, so it never interpolates across the boundary between two leads.
 _C.ECG.SOURCE_SAMPLING_RATE = 0
 # Per-lead zero mean and unit variance, as both cardiac use cases apply.
 _C.ECG.STANDARDISE = True
 # Backbone each lead or each recording is encoded with; see
 # kalecardiac.model.embed.SIGNAL_ENCODERS.
 _C.ECG.ENCODER = "conv"
-# Whether each lead is its own modality with its own encoder ("lead"), or the leads
-# are the channels of one recording encoded together ("recording").
-_C.ECG.MODALITY = "recording"
 
 # ---------------------------------------------------------------------------
 # Image
@@ -93,17 +91,22 @@ _C.IMAGE.SCALE = True
 # Model
 # ---------------------------------------------------------------------------
 _C.MODEL = CfgNode()
-# Which model to build. An experiment's runner maps this to a class; the names the two
-# supplied examples use are "cardiovae", "lsemvae" and "multimodal_vae".
+# Which model to build. An experiment's runner maps this to a class and rejects a name it
+# cannot build, so a misspelt or misplaced model name fails at start-up rather than
+# training something else. The supplied examples build "cardiovae" and "lsemvae".
 _C.MODEL.NAME = "multimodal_vae"
 _C.MODEL.LATENT_DIM = 256
 # Channel widths of a convolutional encoder, and of its decoder reversed.
 _C.MODEL.CHANNELS = [16, 32, 64]
+# Kernel width of every convolutional encoder layer. The decoders keep the kernel that
+# doubles the length exactly, which is a property of upsampling, not a receptive field.
 _C.MODEL.KERNEL_SIZE = 3
 _C.MODEL.DROPOUT = 0.5
 # Width of the hidden layer in a prediction head. Empty gives a linear head.
 _C.MODEL.HEAD_HIDDEN = [128]
-# Checkpoint to initialise from when fine-tuning. Empty trains from scratch.
+# Checkpoint of a pretrained representation. Set, pretraining is skipped and these
+# weights are loaded instead -- strictly, so a checkpoint from a different architecture
+# fails rather than half-loading. Empty pretrains from scratch.
 _C.MODEL.PRETRAINED = ""
 # Freeze the pretrained encoders during fine-tuning, as both cardiac use cases do.
 _C.MODEL.FREEZE_ENCODERS = True

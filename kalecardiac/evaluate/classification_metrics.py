@@ -9,15 +9,20 @@ precision rank; sensitivity and specificity say what the model does at a chosen
 operating point, which is what a clinician asks and what a single accuracy figure hides
 on an imbalanced cohort; and the confusion matrix underlies both.
 
-Scores may be logits or probabilities throughout. Ranking metrics are invariant to the
-sigmoid, so only the threshold metrics apply it.
+Scores may be logits or probabilities throughout. Binary ranking metrics are invariant
+to the sigmoid, so only the threshold metrics apply it. A multiclass one-versus-rest
+ranking is *not* invariant to the softmax -- a class's probability depends on every
+other class's logit -- so the multiclass metrics apply it to anything that is not
+already a distribution over the classes.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
+from contextlib import suppress
 
 import numpy as np
+from numpy.typing import ArrayLike
 from sklearn.metrics import (
     accuracy_score,
     average_precision_score,
@@ -34,7 +39,7 @@ class MetricError(ValueError):
     """Raised when a metric cannot be computed from the values given."""
 
 
-def _as_binary_labels(labels: np.ndarray) -> np.ndarray:
+def _as_binary_labels(labels: ArrayLike) -> np.ndarray:
     labels = np.asarray(labels).reshape(-1)
     present = np.unique(labels)
     if present.size < 2:
@@ -45,7 +50,7 @@ def _as_binary_labels(labels: np.ndarray) -> np.ndarray:
     return labels.astype(int)
 
 
-def _as_probabilities(scores: np.ndarray) -> np.ndarray:
+def _as_probabilities(scores: ArrayLike) -> np.ndarray:
     """Read scores as probabilities, applying a sigmoid only if they are not already."""
     scores = np.asarray(scores, dtype=np.float64).reshape(-1)
     if scores.size and scores.min() >= 0.0 and scores.max() <= 1.0:
@@ -53,7 +58,7 @@ def _as_probabilities(scores: np.ndarray) -> np.ndarray:
     return 1.0 / (1.0 + np.exp(-scores))
 
 
-def roc_auc(labels: np.ndarray, scores: np.ndarray) -> float:
+def roc_auc(labels: ArrayLike, scores: ArrayLike) -> float:
     """Area under the ROC curve.
 
     Args:
@@ -69,7 +74,7 @@ def roc_auc(labels: np.ndarray, scores: np.ndarray) -> float:
     return float(roc_auc_score(_as_binary_labels(labels), np.asarray(scores).reshape(-1)))
 
 
-def sensitivity_specificity(labels: np.ndarray, scores: np.ndarray, threshold: float = 0.5) -> tuple[float, float]:
+def sensitivity_specificity(labels: ArrayLike, scores: ArrayLike, threshold: float = 0.5) -> tuple[float, float]:
     """Sensitivity and specificity at an operating point.
 
     The pair a clinical reader asks for, and the reason accuracy alone is not enough:
@@ -97,7 +102,7 @@ def sensitivity_specificity(labels: np.ndarray, scores: np.ndarray, threshold: f
     return float(sensitivity), float(specificity)
 
 
-def binary_metrics(labels: np.ndarray, scores: np.ndarray, threshold: float = 0.5) -> dict:
+def binary_metrics(labels: ArrayLike, scores: ArrayLike, threshold: float = 0.5) -> dict:
     """Summarise a binary prediction.
 
     ``roc_auc`` and ``average_precision`` rank the scores and ignore ``threshold``; the
@@ -146,12 +151,77 @@ def binary_metrics(labels: np.ndarray, scores: np.ndarray, threshold: float = 0.
     }
 
 
-def multiclass_metrics(labels: np.ndarray, probabilities: np.ndarray, class_names: Sequence[str] | None = None) -> dict:
+def _as_class_probabilities(scores: np.ndarray) -> np.ndarray:
+    """Read ``(N, K)`` scores as probabilities, applying a softmax only if they are not already."""
+    if scores.min() >= 0.0 and scores.max() <= 1.0 and np.allclose(scores.sum(axis=1), 1.0, atol=1e-4):
+        # Renormalised because a float32 softmax can drift outside scikit-learn's
+        # tolerance for "sums to one", which is far tighter than this check's.
+        return scores / scores.sum(axis=1, keepdims=True)
+    exponentials = np.exp(scores - scores.max(axis=1, keepdims=True))
+    return exponentials / exponentials.sum(axis=1, keepdims=True)
+
+
+def _as_multiclass(labels: ArrayLike, scores: ArrayLike) -> tuple[np.ndarray, np.ndarray]:
+    """Validate a multiclass prediction and return ``(labels, probabilities)`` as arrays."""
+    labels = np.asarray(labels).reshape(-1)
+    scores = np.asarray(scores, dtype=np.float64)
+    if scores.ndim != 2 or scores.shape[0] != labels.size or scores.shape[1] < 2:
+        raise MetricError(f"expected ({labels.size}, num_classes) scores, got {scores.shape}")
+    probabilities = _as_class_probabilities(scores)
+    if not np.all(np.isclose(labels, np.round(labels))):
+        raise MetricError("multiclass labels must be class indices, but some are not whole numbers")
+    labels = labels.astype(int)
+    out_of_range = sorted({int(value) for value in labels if not 0 <= value < probabilities.shape[1]})
+    if out_of_range:
+        raise MetricError(
+            f"labels {out_of_range} lie outside the {probabilities.shape[1]} classes the probabilities cover"
+        )
+    return labels, probabilities
+
+
+def multiclass_roc_auc(labels: ArrayLike, scores: ArrayLike) -> float:
+    """Macro one-versus-rest area under the ROC curve.
+
+    Each class against all the others, then averaged with equal weight per class -- so a
+    rare phenotype counts as much as a common one, which is what a clinical multiclass
+    endpoint usually wants and what a frequency-weighted average would hide.
+
+    The multiclass counterpart of :func:`roc_auc`, and what
+    :class:`~kalecardiac.pipeline.ClassificationTask` monitors for a multiclass
+    endpoint. Reporting one class against the rest instead would make checkpoint
+    selection quietly favour distinguishing that one class.
+
+    Args:
+        labels: ``(N,)`` class indices.
+        scores: ``(N, num_classes)`` probabilities, or logits, which are passed through a
+            softmax first.
+
+    Returns:
+        The macro area: 0.5 for a random ranking, 1.0 for a perfect one.
+
+    Raises:
+        MetricError: If the shapes disagree, a label is not a valid class index, or a
+            class is absent -- its one-versus-rest curve is then undefined, which on a
+            small validation split is ordinary rather than an error in the model.
+    """
+    labels, probabilities = _as_multiclass(labels, scores)
+    num_classes = probabilities.shape[1]
+    absent = sorted(set(range(num_classes)) - set(np.unique(labels).tolist()))
+    if absent:
+        raise MetricError(
+            f"class(es) {absent} are absent from these labels, so their one-versus-rest curve is undefined; "
+            f"the split is too small or too imbalanced to score every class"
+        )
+    return float(roc_auc_score(labels, probabilities, multi_class="ovr", average="macro"))
+
+
+def multiclass_metrics(labels: ArrayLike, scores: ArrayLike, class_names: Sequence[str] | None = None) -> dict:
     """Summarise a multiclass prediction.
 
     Args:
         labels: ``(N,)`` class indices.
-        probabilities: ``(N, num_classes)`` predicted probabilities.
+        scores: ``(N, num_classes)`` probabilities, or logits, which are passed through a
+            softmax first.
         class_names: Names for the confusion matrix's axes. Defaults to the indices.
 
     Returns:
@@ -161,10 +231,7 @@ def multiclass_metrics(labels: np.ndarray, probabilities: np.ndarray, class_name
     Raises:
         MetricError: If the shapes disagree, or fewer than two classes are present.
     """
-    labels = np.asarray(labels).reshape(-1).astype(int)
-    probabilities = np.asarray(probabilities, dtype=np.float64)
-    if probabilities.ndim != 2 or probabilities.shape[0] != labels.size:
-        raise MetricError(f"expected ({labels.size}, num_classes) probabilities, got {probabilities.shape}")
+    labels, probabilities = _as_multiclass(labels, scores)
     if np.unique(labels).size < 2:
         raise MetricError("a multiclass metric needs at least two classes present")
 
@@ -180,8 +247,8 @@ def multiclass_metrics(labels: np.ndarray, probabilities: np.ndarray, class_name
     }
     # One-versus-rest AUC is undefined when a class is absent from this split, which on
     # a small cohort is ordinary; report what can be computed rather than failing.
-    if np.unique(labels).size == num_classes:
-        summary["roc_auc_ovr"] = float(roc_auc_score(labels, probabilities, multi_class="ovr", average="macro"))
+    with suppress(MetricError):
+        summary["roc_auc_ovr"] = multiclass_roc_auc(labels, probabilities)
     return summary
 
 

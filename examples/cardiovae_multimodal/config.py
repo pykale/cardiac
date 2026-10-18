@@ -31,6 +31,8 @@ def get_cfg_defaults() -> CfgNode:
     cfg = _package_defaults()
 
     # ---------------------------------------------------------------- data
+    # Modalities compared when no --arms are given: each alone, then all of them fused.
+    # Naming one gives a unimodal run.
     cfg.DATASET.MODALITIES = [ECG, CXR]
     # Both arms are scored on the subjects that have a radiograph, so the unimodal and
     # multimodal numbers are commensurable. Without this the ECG arm would be scored on
@@ -43,11 +45,9 @@ def get_cfg_defaults() -> CfgNode:
     # ---------------------------------------------------------------- modalities
     # A ten-second twelve-lead recording at 500 Hz, flattened into one channel. The
     # reference implementation encodes the leads concatenated end to end rather than as
-    # channels; ECG.MODALITY selects which, and "recording" with NUM_CHANNELS 1 is the
-    # flattened form.
+    # channels, which is what NUM_CHANNELS 1 below gives.
     cfg.ECG.LENGTH = 60000
     cfg.ECG.SAMPLING_RATE = 500
-    cfg.ECG.MODALITY = "recording"
     cfg.ECG.STANDARDISE = True
     # Channels the recording is presented with. 1 flattens every lead into one long
     # signal, as the paper does; 12 encodes the leads as channels, which is the more
@@ -59,12 +59,19 @@ def get_cfg_defaults() -> CfgNode:
     cfg.IMAGE.SCALE = True
 
     # ---------------------------------------------------------------- model
+    # The only model this example builds; anything else is rejected at start-up.
     cfg.MODEL.NAME = "cardiovae"
     cfg.MODEL.LATENT_DIM = 256
     cfg.MODEL.CHANNELS = [16, 32, 64]
+    cfg.MODEL.KERNEL_SIZE = 3
     cfg.MODEL.HEAD_HIDDEN = [128]
     cfg.MODEL.DROPOUT = 0.5
     cfg.MODEL.FREEZE_ENCODERS = True
+
+    # A product of experts is the published model. "moe", "mean", "barycenter" and
+    # "hime" are ablations of it, reachable from the command line.
+    cfg.FUSION.LATENT_METHOD = "poe"
+    cfg.FUSION.USE_PRIOR = True
 
     # ---------------------------------------------------------------- objective
     # The ECG is weighted ten times the radiograph: a sum of squares over 60,000
@@ -90,6 +97,13 @@ def get_cfg_defaults() -> CfgNode:
     # Predict the measurement itself rather than the threshold applied to it. Keeps the
     # information the threshold throws away, and is a RegressionTask instead.
     cfg.ENDPOINT.REGRESSION = False
+    # Classes the endpoint has. A threshold defines two; more need LABEL_COLUMN, a column
+    # of class indices 0..NUM_CLASSES-1 that the cohort's table records directly -- a
+    # haemodynamic subtype, say, which takes more than one measurement to define.
+    cfg.ENDPOINT.NUM_CLASSES = 2
+    # Read the class from this column instead of thresholding VALUE_COLUMN. Empty keeps
+    # the threshold.
+    cfg.ENDPOINT.LABEL_COLUMN = ""
 
     # ---------------------------------------------------------------- run
     cfg.SOLVER.SEED = 2026

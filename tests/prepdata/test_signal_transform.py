@@ -184,3 +184,8 @@ class TestSignalPipeline:
 
     def test_step_name_sees_through_nested_partials(self):
         assert "crop_or_pad" in step_name(partial(partial(crop_or_pad, length=8), centre=True))
+
+
+class TestPipelineLength:
+    def test_a_pipeline_counts_its_steps(self):
+        assert len(SignalPipeline([interpolate_missing, standardise])) == 2

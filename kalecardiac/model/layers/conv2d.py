@@ -58,7 +58,8 @@ class Conv2dEncoder(BaseCNN):
         channels: Output channels of each convolution, one entry per layer.
         kernel_size: Kernel extent of every convolution.
         stride: Stride of every convolution.
-        padding: Padding of every convolution.
+        padding: Padding of every convolution. ``None`` uses ``kernel_size // 2``, as
+            :class:`~kalecardiac.model.layers.Conv1dEncoder` does, for the same reason.
         batch_norm: Insert batch normalisation after each convolution.
         activation: Non-linearity after each convolution, by PyKale's name.
 
@@ -74,7 +75,7 @@ class Conv2dEncoder(BaseCNN):
         channels: Sequence[int] = (16, 32, 64),
         kernel_size: int = 3,
         stride: int = 2,
-        padding: int = 1,
+        padding: int | None = None,
         batch_norm: bool = False,
         activation: str = "relu",
     ) -> None:
@@ -84,6 +85,11 @@ class Conv2dEncoder(BaseCNN):
                 f"need positive in_channels, a (height, width) size and at least one layer, "
                 f"got {in_channels}, {tuple(size)}, {list(channels)}"
             )
+        if kernel_size < 1:
+            raise ValueError(f"kernel_size must be positive, got {kernel_size}")
+        padding = kernel_size // 2 if padding is None else padding
+        self.kernel_size = int(kernel_size)
+        self.padding = int(padding)
 
         self.in_channels = int(in_channels)
         self.size = (int(size[0]), int(size[1]))

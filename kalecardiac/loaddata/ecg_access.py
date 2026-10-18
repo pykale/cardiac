@@ -15,12 +15,15 @@ Two sources cover where recordings come from:
 and :class:`LeadSource` turns either of them into *one lead*, which is the mechanism
 behind treating each lead as its own modality::
 
-    >>> sources = lead_sources(ecg, leads=["I", "II", "V1"])
+    >>> ecg = ECGArraySource({"s1": np.zeros((3, 500))}, leads=["I", "II", "V1"])
+    >>> sources = lead_sources(ecg)
     >>> sorted(sources)
     ['I', 'II', 'V1']
+    >>> sources["V1"].get("s1", 0).shape
+    torch.Size([1, 500])
 
 That is all "lead-specific multimodal learning" needs from the loading stage: after it,
-a twelve-lead cohort is an ordinary thirteen-source :class:`~kalecardiac.loaddata.MultimodalDataset`
+a twelve-lead cohort is an ordinary twelve-source :class:`~kalecardiac.loaddata.MultimodalDataset`
 and nothing downstream knows the modalities happen to be leads.
 
 **Lead names are matched case-insensitively and without a ``LEAD_`` prefix**, because

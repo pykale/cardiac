@@ -24,6 +24,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Mapping, Sequence
 
 import numpy as np
+from numpy.typing import ArrayLike
 
 from kalecardiac.evaluate.classification_metrics import MetricError
 
@@ -72,8 +73,8 @@ def summarise_folds(fold_metrics: Sequence[Mapping[str, float]], keys: Sequence[
 
 
 def bootstrap_ci(
-    labels: np.ndarray,
-    scores: np.ndarray,
+    labels: ArrayLike,
+    scores: ArrayLike,
     metric: Callable[[np.ndarray, np.ndarray], float],
     n_resamples: int = 1000,
     confidence: float = 0.95,

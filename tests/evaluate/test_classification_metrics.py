@@ -10,6 +10,7 @@ from kalecardiac.evaluate import (
     binary_metrics,
     mean_roc_curve,
     multiclass_metrics,
+    multiclass_roc_auc,
     roc_auc,
     sensitivity_specificity,
 )
@@ -141,6 +142,72 @@ class TestMulticlassMetrics:
             multiclass_metrics(np.array([0, 1]), np.zeros((3, 3)))
 
 
+class TestMulticlassRocAuc:
+    def test_a_perfect_ranking_scores_one(self):
+        labels = np.array([0, 1, 2, 0, 1, 2])
+        assert multiclass_roc_auc(labels, np.eye(3)[labels]) == pytest.approx(1.0)
+
+    def test_agrees_with_scikit_learn_macro_one_versus_rest(self):
+        from sklearn.metrics import roc_auc_score
+
+        generator = np.random.default_rng(1)
+        labels = generator.integers(0, 4, size=80)
+        probabilities = generator.dirichlet(np.ones(4), size=80)
+        expected = roc_auc_score(labels, probabilities, multi_class="ovr", average="macro")
+        assert multiclass_roc_auc(labels, probabilities) == pytest.approx(expected)
+
+    def test_a_rare_class_counts_as_much_as_a_common_one(self):
+        # Two common classes ranked perfectly and a rare one ranked backwards. The
+        # macro area loses a full third for it; a frequency-weighted one would lose a
+        # tenth, and hide that the rare class is not detected at all.
+        labels = np.array([0] * 9 + [1] * 9 + [2] * 2)
+        probabilities = np.array([[0.8, 0.1, 0.1], [0.1, 0.8, 0.1], [0.5, 0.5, 0.0]])[labels]
+        assert multiclass_roc_auc(labels, probabilities) == pytest.approx(2 / 3)
+
+    def test_logits_are_read_through_a_softmax(self):
+        # Not a formality: the softmax changes a one-versus-rest ranking. Subject 0's
+        # class-0 logit (1.0) is below subject 1's (2.0), but after the softmax its
+        # class-0 probability is the higher, because subject 1's class-1 logit is huge.
+        logits = np.array([[1.0, -5.0, -5.0], [2.0, 9.0, 0.0], [0.0, 0.0, 3.0], [-1.0, 4.0, 0.0]])
+        labels = np.array([0, 1, 2, 1])
+        probabilities = np.exp(logits) / np.exp(logits).sum(axis=1, keepdims=True)
+        assert multiclass_roc_auc(labels, logits) == pytest.approx(multiclass_roc_auc(labels, probabilities))
+        assert multiclass_roc_auc(labels, logits) == pytest.approx(1.0)
+
+    def test_metrics_and_area_agree_on_logits(self):
+        generator = np.random.default_rng(2)
+        labels = np.arange(30) % 3
+        probabilities = generator.dirichlet(np.ones(3), size=30)
+        logits = np.log(probabilities)
+        assert multiclass_metrics(labels, logits)["roc_auc_ovr"] == pytest.approx(
+            multiclass_roc_auc(labels, probabilities)
+        )
+
+    def test_a_single_column_is_not_a_multiclass_prediction(self):
+        with pytest.raises(MetricError, match="expected"):
+            multiclass_roc_auc(np.array([0, 1, 1]), np.array([[0.2], [0.7], [0.9]]))
+
+    def test_labels_as_floats_are_accepted(self):
+        # Targets come back from a batch as floats; whole-number floats are class indices.
+        assert multiclass_roc_auc(np.array([0.0, 1.0, 2.0]), np.eye(3)) == pytest.approx(1.0)
+
+    def test_an_absent_class_is_named(self):
+        with pytest.raises(MetricError, match=r"\[2\] are absent"):
+            multiclass_roc_auc(np.array([0, 1, 0, 1]), np.full((4, 3), 1 / 3))
+
+    def test_a_label_outside_the_classes_is_rejected(self):
+        with pytest.raises(MetricError, match="outside the 3 classes"):
+            multiclass_roc_auc(np.array([0, 1, 3]), np.full((3, 3), 1 / 3))
+
+    def test_a_fractional_label_is_rejected(self):
+        with pytest.raises(MetricError, match="whole numbers"):
+            multiclass_roc_auc(np.array([0.0, 0.5, 2.0]), np.full((3, 3), 1 / 3))
+
+    def test_mismatched_shapes_are_rejected(self):
+        with pytest.raises(MetricError, match="expected"):
+            multiclass_roc_auc(np.array([0, 1, 2]), np.full(3, 1 / 3))
+
+
 class TestMeanRocCurve:
     @pytest.fixture
     def folds(self):
@@ -169,3 +236,9 @@ class TestMeanRocCurve:
     def test_mismatched_lists_are_rejected(self, folds):
         with pytest.raises(MetricError, match="exactly one of each"):
             mean_roc_curve([labels for labels, _ in folds], [folds[0][1]])
+
+
+class TestMulticlassMetricsRefusal:
+    def test_a_split_holding_one_class_is_refused(self):
+        with pytest.raises(MetricError, match="at least two classes"):
+            multiclass_metrics(np.zeros(4), np.full((4, 3), 1 / 3))

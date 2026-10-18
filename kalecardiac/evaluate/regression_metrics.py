@@ -16,11 +16,12 @@ endpoints.
 from __future__ import annotations
 
 import numpy as np
+from numpy.typing import ArrayLike
 
 from kalecardiac.evaluate.classification_metrics import MetricError
 
 
-def _as_pair(targets: np.ndarray, predictions: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def _as_pair(targets: ArrayLike, predictions: ArrayLike) -> tuple[np.ndarray, np.ndarray]:
     targets = np.asarray(targets, dtype=np.float64).reshape(-1)
     predictions = np.asarray(predictions, dtype=np.float64).reshape(-1)
     if targets.size != predictions.size:
@@ -30,7 +31,7 @@ def _as_pair(targets: np.ndarray, predictions: np.ndarray) -> tuple[np.ndarray, 
     return targets, predictions
 
 
-def r2_score(targets: np.ndarray, predictions: np.ndarray) -> float:
+def r2_score(targets: ArrayLike, predictions: ArrayLike) -> float:
     """Coefficient of determination.
 
     One minus the ratio of the residual sum of squares to the total sum of squares:
@@ -60,7 +61,7 @@ def r2_score(targets: np.ndarray, predictions: np.ndarray) -> float:
     return 1.0 - residual / total
 
 
-def regression_metrics(targets: np.ndarray, predictions: np.ndarray, unit: str | None = None) -> dict:
+def regression_metrics(targets: ArrayLike, predictions: ArrayLike, unit: str | None = None) -> dict:
     """Summarise a continuous prediction.
 
     Args:

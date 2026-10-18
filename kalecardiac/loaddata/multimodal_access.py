@@ -3,15 +3,22 @@
 A cohort is a set of subjects and, for each, some number of *sources* that can be
 asked for that subject's data. What those sources are is the caller's business::
 
+    >>> from kalecardiac.loaddata import STANDARD_12_LEAD, ECGArraySource, ImageArraySource
+    >>> identifiers = ["s1", "s2"]
+    >>> recordings = {name: np.zeros((12, 500)) for name in identifiers}
+    >>> images = {"s1": np.zeros((64, 64))}  # s2 has no radiograph
+    >>> vectors = {name: np.zeros(8) for name in identifiers}
     >>> dataset = MultimodalDataset(
     ...     identifiers,
     ...     sources={
-    ...         "ecg": ECGArraySource(recordings, leads=LEADS_12),
+    ...         "ecg": ECGArraySource(recordings, leads=STANDARD_12_LEAD),
     ...         "cxr": ImageArraySource(images),
     ...         "clinical": ArraySource(vectors),
     ...     },
-    ...     target=target,
+    ...     target=ColumnTarget.from_mapping({"label": {"s1": 1, "s2": 0}}),
     ... )
+    >>> {name: bool(flag) for name, flag in dataset[1].present.items()}
+    {'ecg': True, 'cxr': False, 'clinical': True}
 
 Nothing about that is specific to ECG plus imaging, or to two modalities. Twelve
 single-lead sources, one recording source, an image and a clinical vector, or any mix

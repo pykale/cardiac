@@ -6,6 +6,14 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
+# A newer push to the same branch supersedes a run still in progress.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
 
   pre-commit-check:
@@ -23,6 +31,7 @@ jobs:
         uses: pre-commit/action@v3.0.1
 
   test:
+    name: Tests (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -35,9 +44,123 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
+          cache-dependency-path: pyproject.toml
 
+      # CPU wheels: no job here uses a GPU, and the CUDA stack is several gigabytes.
+      # PyKale 0.2 caps torch at 2.6.
+      - name: Install PyTorch (CPU)
+        run: pip install "torch<=2.6.0" torchvision --index-url https://download.pytorch.org/whl/cpu
+
+      # Every optional extra, so that no test is skipped for a missing dependency.
       - name: Install package
-        run: pip install -e ".[dev,interpret]"
+        run: pip install -e ".[dev,interpret,ecg,imaging]"
 
+      # The library's docstring examples run as part of this, via --doctest-modules.
       - name: pytest
-        run: pytest --cov=kalecardiac --cov-report=term-missing
+        # Every line of the library is exercised; the floor leaves room without letting it slide.
+        run: pytest --cov=kalecardiac --cov-report=term-missing --cov-fail-under=98
+
+  examples:
+    name: Examples from the command line (synthetic)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install
+        run: |
+          pip install "torch<=2.6.0" torchvision --index-url https://download.pytorch.org/whl/cpu
+          pip install -e ".[interpret]"
+
+      # Exactly the commands each example's README documents. Synthetic cohorts: these
+      # verify the workflows run end to end, and produce no result.
+      - name: CardioVAE quick run
+        run: >-
+          python -m examples.cardiovae_multimodal.main
+          --cfg examples/cardiovae_multimodal/configs/quick.yaml
+          OUTPUT.OUT_DIR "$RUNNER_TEMP/cardiovae"
+
+      - name: LS-EMVAE quick run
+        run: >-
+          python -m examples.lsemvae_ecg.main
+          --cfg examples/lsemvae_ecg/configs/quick.yaml
+          OUTPUT.OUT_DIR "$RUNNER_TEMP/lsemvae"
+
+      - name: Check what the runs wrote
+        run: |
+          test -s "$RUNNER_TEMP/cardiovae/summary.json"
+          test -s "$RUNNER_TEMP/cardiovae/ecg+cxr/predictions.csv"
+          test -s "$RUNNER_TEMP/lsemvae/summary.json"
+          test -s "$RUNNER_TEMP/lsemvae/I+II+III/robustness.csv"
+
+  package:
+    name: Build, check and install the distributions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build
+        run: |
+          pip install build twine
+          python -m build
+          twine check --strict dist/*
+
+      - name: The wheel holds the library alone, with its type information
+        run: |
+          python - <<'EOF'
+          import pathlib, zipfile
+          wheel = next(pathlib.Path("dist").glob("*.whl"))
+          names = zipfile.ZipFile(wheel).namelist()
+          tops = {name.split("/")[0] for name in names}
+          assert {top for top in tops if not top.endswith(".dist-info")} == {"kalecardiac"}, tops
+          assert "kalecardiac/py.typed" in names
+          EOF
+
+      - name: Install the wheel into a clean environment
+        run: |
+          python -m venv "$RUNNER_TEMP/clean"
+          "$RUNNER_TEMP/clean/bin/pip" install "torch<=2.6.0" torchvision --index-url https://download.pytorch.org/whl/cpu
+          "$RUNNER_TEMP/clean/bin/pip" install dist/*.whl pytest
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/clean/bin/python" -c "import kalecardiac; print(kalecardiac.__version__, kalecardiac.__file__)"
+
+      # The sdist carries the tests and the examples they compose, so it can be tested
+      # on its own -- which is what a downstream packager does with it.
+      - name: The source distribution carries a runnable test suite
+        run: |
+          mkdir "$RUNNER_TEMP/sdist"
+          tar -xzf dist/*.tar.gz -C "$RUNNER_TEMP/sdist" --strip-components=1
+          cd "$RUNNER_TEMP/sdist"
+          "$RUNNER_TEMP/clean/bin/python" -m pytest -m "not slow" -q -p no:cacheprovider
+
+  docs:
+    name: Documentation builds without warnings
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            pyproject.toml
+            docs/requirements.txt
+
+      - name: Install
+        run: |
+          pip install "torch<=2.6.0" torchvision --index-url https://download.pytorch.org/whl/cpu
+          pip install -e . -r docs/requirements.txt
+
+      # As Read the Docs builds it: a warning is a failure.
+      - name: Build
+        run: sphinx-build -W --keep-going -b html docs docs/_build/html

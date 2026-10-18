@@ -55,7 +55,12 @@ IMAGE = "image"
 
 
 class CardioVAE(MultimodalVAE):
-    """A product-of-experts VAE over one signal modality and one image modality.
+    """A multimodal VAE over one signal modality and one image modality.
+
+    A product of experts by default, which is the published model. The other latent
+    fusions are accepted as ablations -- "CardioVAE with a mixture rather than a
+    product" is a constructor argument, not a second class, exactly as
+    :class:`~kalecardiac.model.embed.LSEMVAE` takes its own ablations.
 
     Args:
         signal_channels: Channels the signal has. One for a rhythm strip or a
@@ -66,6 +71,10 @@ class CardioVAE(MultimodalVAE):
         image_size: Image ``(height, width)``.
         latent_dim: Width of the shared latent space.
         channels: Encoder channel widths; the decoders reverse them.
+        kernel_size: Kernel width of every convolutional *encoder* layer, signal and
+            image alike. The decoders keep the kernel that doubles the length exactly,
+            which is a property of the upsampling rather than a receptive field to
+            tune. Ignored by a non-convolutional ``signal_encoder``.
         signal_encoder: Signal backbone, by name; see
             :data:`~kalecardiac.model.embed.SIGNAL_ENCODERS`.
         image_output_activation: Applied to the image reconstruction. ``"sigmoid"``
@@ -74,10 +83,14 @@ class CardioVAE(MultimodalVAE):
             pass ``None`` for a standardised image.
         signal_name: Name the signal modality carries in a batch.
         image_name: Name the image modality carries in a batch.
+        fusion: Latent fusion; ``"poe"`` is the published model. See
+            :data:`~kalecardiac.model.layers.EXPERT_FUSIONS` for the ablations.
         use_prior: Include the standard-normal expert in the product.
+        num_groups: Groups a hierarchical fusion forms; used by ``"hime"`` only.
 
     Raises:
         ValueError: If a width or size is not positive.
+        KeyError: If ``fusion`` is not a registered mechanism.
     """
 
     def __init__(
@@ -88,24 +101,33 @@ class CardioVAE(MultimodalVAE):
         image_size: Sequence[int] = (224, 224),
         latent_dim: int = 256,
         channels: Sequence[int] = (16, 32, 64),
+        kernel_size: int = 3,
         signal_encoder: str = "conv",
         image_output_activation: str | None = "sigmoid",
         signal_name: str = SIGNAL,
         image_name: str = IMAGE,
+        fusion: str = "poe",
         use_prior: bool = True,
+        num_groups: int = 4,
     ) -> None:
         decoder_channels = tuple(reversed(tuple(channels)))
         encoders: dict[str, nn.Module] = {
             signal_name: VariationalEncoder(
                 build_signal_encoder(
-                    signal_encoder, in_channels=signal_channels, length=signal_length, channels=channels
+                    signal_encoder,
+                    in_channels=signal_channels,
+                    length=signal_length,
+                    channels=channels,
+                    kernel_size=kernel_size,
                 )
                 if signal_encoder == "conv"
                 else build_signal_encoder(signal_encoder, in_channels=signal_channels, length=signal_length),
                 latent_dim=latent_dim,
             ),
             image_name: VariationalEncoder(
-                build_image_encoder(in_channels=image_channels, size=image_size, channels=channels),
+                build_image_encoder(
+                    in_channels=image_channels, size=image_size, channels=channels, kernel_size=kernel_size
+                ),
                 latent_dim=latent_dim,
             ),
         }
@@ -132,9 +154,11 @@ class CardioVAE(MultimodalVAE):
             encoders=encoders,
             decoders=decoders,
             latent_dim=latent_dim,
-            fusion="poe",
+            fusion=fusion,
             use_prior=use_prior,
+            **({"num_groups": num_groups} if fusion == "hime" else {}),
         )
+        self.kernel_size = int(kernel_size)
         self.signal_name = signal_name
         self.image_name = image_name
         self.signal_length = int(signal_length)

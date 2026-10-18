@@ -121,3 +121,10 @@ class TestSavePredictions:
             rows = list(csv.DictReader(handle))
         assert len(rows) == 3 * len(folds[0])
         assert {row["fold"] for row in rows} == {"0", "1", "2"}
+
+
+class TestPredictSplitDevice:
+    def test_a_named_device_is_used_and_the_result_is_the_same(self, trained):
+        model, loader = trained
+        on_cpu = predict_split(model, loader, device="cpu")
+        assert np.allclose(on_cpu.scores, predict_split(model, loader).scores)

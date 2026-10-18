@@ -181,3 +181,29 @@ def test_splitting_a_synthetic_cohort_keeps_both_classes(cohort, label_target):
     frame = label_target.frame(cohort.subject_id)
     for fold in CrossValidation(n_splits=5, group_by="subject_id", stratify_by=["label"], random_state=0).split(frame):
         assert frame.iloc[fold["test"]]["label"].nunique() == 2
+
+
+class TestSmallCohortsAndDescriptions:
+    def test_an_impossible_validation_share_is_refused(self):
+        with pytest.raises(SplitError, match="val_size must lie in"):
+            CrossValidation(n_splits=3, val_size=1.0)
+
+    def test_a_splitter_describes_its_settings(self):
+        assert repr(HoldOut(test_size=0.25)).startswith("HoldOut(val_size=0.15, group_by=None")
+
+    def test_a_training_half_too_small_to_carve_is_named(self):
+        frame = pd.DataFrame({"subject_id": ["a", "b", "c"]})
+        with pytest.raises(SplitError, match="need at least 2 unique subject_id to hold part out, got 1"):
+            next(HoldOut(test_size=0.6, val_size=0.2, group_by="subject_id").split(frame))
+
+    def test_rows_without_groups_are_split_one_by_one(self):
+        frame = pd.DataFrame({"label": [0, 1] * 10})
+        split = next(HoldOut(test_size=0.25, val_size=0.2, random_state=0).split(frame))
+        assert sorted(np.concatenate([split[name] for name in SPLIT_NAMES]).tolist()) == list(range(20))
+        assert len(split["test"]) == 5
+
+    def test_a_hold_out_too_small_to_stratify_shuffles_rather_than_fails(self):
+        # One held-out row cannot carry both classes, so stratification is dropped.
+        frame = pd.DataFrame({"label": [0, 1] * 5})
+        split = next(HoldOut(test_size=0.1, val_size=0.0, stratify_by=["label"], random_state=0).split(frame))
+        assert len(split["test"]) == 1 and len(split["train"]) == 9

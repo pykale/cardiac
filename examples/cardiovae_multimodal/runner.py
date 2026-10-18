@@ -21,21 +21,29 @@ The workflow the example demonstrates:
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
-import numpy as np
 import pytorch_lightning as pl
 import torch
 from torch.utils.data import DataLoader
 
 from examples.cardiovae_multimodal.config import CXR, ECG
-from examples.cardiovae_multimodal.data import CardioVAECohort, load_cohort
+from examples.cardiovae_multimodal.data import (
+    CardioVAECohort,
+    check_endpoint,
+    load_cohort,
+    modality_names,
+    summarise,
+)
 from kalecardiac.config import parse_weights
 from kalecardiac.evaluate import (
     MetricError,
     binary_metrics,
+    multiclass_metrics,
+    multiclass_roc_auc,
     predict_split,
+    r2_score,
     regression_metrics,
     roc_auc,
     save_predictions,
@@ -50,10 +58,56 @@ from kalecardiac.loaddata import (
     release_workers,
 )
 from kalecardiac.model.embed import CardioVAE, MultimodalPredictor
+from kalecardiac.model.predict import class_weight_from_labels, positive_weight_from_labels
 from kalecardiac.pipeline import CardiacTrainer, ClassificationTask, ReconstructionTask, RegressionTask
-from kalecardiac.utils import ensure_dir, load_checkpoint, set_seed, write_csv, write_json
+from kalecardiac.utils import ensure_dir, load_checkpoint, preserve_rng_state, set_seed, write_csv, write_json
 
 logger = logging.getLogger("cardiovae_multimodal")
+
+
+#: The model this example builds. ``MODEL.NAME`` must say so, which is what turns a
+#: configuration copied from another example into a start-up error rather than a run
+#: that quietly trains the wrong thing.
+MODEL_NAME = "cardiovae"
+
+
+def check_model_name(cfg) -> None:
+    """Reject a ``MODEL.NAME`` this example cannot build.
+
+    Raises:
+        ValueError: If ``MODEL.NAME`` is anything but :data:`MODEL_NAME`, naming what to
+            do instead.
+    """
+    if cfg.MODEL.NAME != MODEL_NAME:
+        raise ValueError(
+            f"MODEL.NAME is {cfg.MODEL.NAME!r}, but this example builds {MODEL_NAME!r}. For a lead-specific "
+            f"model run examples.lsemvae_ecg; to ablate the fusion, keep MODEL.NAME and set FUSION.LATENT_METHOD."
+        )
+
+
+def resolve_arms(cfg, arms: Sequence[Sequence[str]] | None) -> list[tuple[str, ...]]:
+    """The modality arms to compare, validated before anything is loaded.
+
+    Without ``arms``, ``DATASET.MODALITIES`` decides: each modality alone, then all of
+    them fused, which is what makes the multimodal claim testable. One modality gives a
+    unimodal run.
+
+    Raises:
+        ValueError: If no arm is left, or an arm names a modality this example lacks --
+            caught here rather than as a ``KeyError`` deep inside fine-tuning.
+    """
+    if arms is None:
+        names = tuple(cfg.DATASET.MODALITIES)
+        arms = [(name,) for name in names] + ([names] if len(names) > 1 else [])
+    resolved = [tuple(arm) for arm in arms]
+    if not resolved or not all(resolved):
+        raise ValueError("no modality to compare; set DATASET.MODALITIES or pass --arms")
+
+    known = set(modality_names())
+    unknown = sorted({name for arm in resolved for name in arm} - known)
+    if unknown:
+        raise ValueError(f"arms name {unknown}, which this example does not have; it has {sorted(known)}")
+    return resolved
 
 
 def build_model(cfg, cohort: CardioVAECohort) -> CardioVAE:
@@ -65,13 +119,34 @@ def build_model(cfg, cohort: CardioVAECohort) -> CardioVAE:
         image_size=tuple(cohort.image_size),
         latent_dim=cfg.MODEL.LATENT_DIM,
         channels=list(cfg.MODEL.CHANNELS),
+        kernel_size=cfg.MODEL.KERNEL_SIZE,
         signal_encoder=cfg.ECG.ENCODER,
         # The image source scales pixels into the unit interval, so the decoder must be
         # able to produce that range and nothing outside it.
         image_output_activation="sigmoid" if cfg.IMAGE.SCALE else None,
         signal_name=ECG,
         image_name=CXR,
+        fusion=cfg.FUSION.LATENT_METHOD,
+        use_prior=cfg.FUSION.USE_PRIOR,
+        num_groups=cfg.FUSION.NUM_GROUPS,
     )
+
+
+def load_pretrained(cfg, cohort: CardioVAECohort) -> CardioVAE:
+    """Load the representation from ``MODEL.PRETRAINED`` rather than learning it again.
+
+    Strictly: a checkpoint saved from a different architecture -- another latent width,
+    another kernel -- fails here rather than half-loading and fine-tuning on a model
+    whose encoders are partly random.
+
+    Raises:
+        FileNotFoundError: If the checkpoint does not exist.
+        RuntimeError: If its weights do not match the configured architecture.
+    """
+    model = build_model(cfg, cohort)
+    load_checkpoint(cfg.MODEL.PRETRAINED, model, strict=True)
+    logger.info("loaded the pretrained representation from %s; pretraining skipped", cfg.MODEL.PRETRAINED)
+    return model
 
 
 def lightning_trainer(cfg, max_epochs: int, out_dir: Path, monitor: str | None = None, mode: str = "min"):
@@ -147,21 +222,25 @@ def pretrain(cfg, cohort: CardioVAECohort, out_dir: Path) -> CardioVAE:
 
 
 def build_task(cfg, labels: Sequence[float]):
-    """The downstream task: a threshold on the measurement, or the measurement itself."""
-    if cfg.ENDPOINT.REGRESSION:
-        return RegressionTask(hidden_dims=list(cfg.MODEL.HEAD_HIDDEN), dropout=cfg.MODEL.DROPOUT)
+    """The downstream task: a class of the endpoint, or the measurement itself.
 
-    pos_weight = cfg.OBJECTIVE.POS_WEIGHT
-    if pos_weight == 0:
-        # Derived from this fold's training labels, never from the whole cohort: a
-        # class balance taken over the test split is a label leak.
-        positives = float(np.sum(labels))
-        pos_weight = (len(labels) - positives) / max(positives, 1.0)
-    return ClassificationTask(
-        pos_weight=max(pos_weight, 0.0),
-        hidden_dims=list(cfg.MODEL.HEAD_HIDDEN),
-        dropout=cfg.MODEL.DROPOUT,
-    )
+    Class balance is taken from ``labels``, which must be this fold's *training* labels:
+    a balance taken over the whole cohort carries the test split's composition into the
+    loss. ``OBJECTIVE.POS_WEIGHT`` 0 derives it, a negative value disables it, and a
+    positive one fixes a binary endpoint's positive weight.
+    """
+    common = {"hidden_dims": list(cfg.MODEL.HEAD_HIDDEN), "dropout": cfg.MODEL.DROPOUT}
+    if cfg.ENDPOINT.REGRESSION:
+        return RegressionTask(**common)
+
+    training = torch.tensor(list(labels), dtype=torch.float32)
+    derive = cfg.OBJECTIVE.POS_WEIGHT == 0
+    num_classes = int(cfg.ENDPOINT.NUM_CLASSES)
+    if num_classes > 2:
+        weight = class_weight_from_labels(training, num_classes) if derive else None
+        return ClassificationTask(num_classes=num_classes, class_weight=weight, **common)
+    pos_weight = float(positive_weight_from_labels(training)) if derive else cfg.OBJECTIVE.POS_WEIGHT
+    return ClassificationTask(pos_weight=max(pos_weight, 0.0), **common)
 
 
 def fine_tune(
@@ -228,7 +307,30 @@ def score(cfg, predictions) -> dict:
     """Metrics for one fold, chosen by what the endpoint is."""
     if cfg.ENDPOINT.REGRESSION:
         return regression_metrics(predictions.targets["value"], predictions.scores, unit=cfg.ENDPOINT.UNIT)
+    if int(cfg.ENDPOINT.NUM_CLASSES) > 2:
+        # The scores are logits, one column per class; the metric applies the softmax.
+        return multiclass_metrics(predictions.targets["label"], predictions.scores)
     return binary_metrics(predictions.targets["label"], predictions.scores)
+
+
+def headline_metric(cfg) -> str:
+    """The metric a run is summarised by: the error, or the threshold-free ranking."""
+    if cfg.ENDPOINT.REGRESSION:
+        return "rmse"
+    return "roc_auc_ovr" if int(cfg.ENDPOINT.NUM_CLASSES) > 2 else "roc_auc"
+
+
+def withholding_metric(cfg) -> tuple[str, Callable, str]:
+    """What a rescoring with modalities withheld is measured in: ``(name, metric, target)``.
+
+    The threshold-free metric of each endpoint, so that a score which moves as a
+    modality is withheld is not also moving with an operating point.
+    """
+    if cfg.ENDPOINT.REGRESSION:
+        return "r2", r2_score, "value"
+    if int(cfg.ENDPOINT.NUM_CLASSES) > 2:
+        return "roc_auc_ovr", multiclass_roc_auc, "label"
+    return "roc_auc", roc_auc, "label"
 
 
 def interpret(cfg, model: CardiacTrainer, test_loader: DataLoader, out_dir: Path) -> dict:
@@ -247,9 +349,10 @@ def interpret(cfg, model: CardiacTrainer, test_loader: DataLoader, out_dir: Path
     except ImportError as error:
         logger.warning("skipping attribution: %s", error)
 
-    if not cfg.ENDPOINT.REGRESSION and len(model.model.modalities) > 1:
+    if len(model.model.modalities) > 1:
+        _, metric, target = withholding_metric(cfg)
         try:
-            summary["ablation"] = modality_ablation(model, test_loader, roc_auc, "label")
+            summary["ablation"] = modality_ablation(model, test_loader, metric, target)
         except MetricError as error:
             logger.warning("skipping ablation: %s", error)
 
@@ -304,21 +407,26 @@ def run(cfg, arms: Sequence[Sequence[str]] | None = None) -> dict:
 
     Args:
         cfg: The frozen configuration.
-        arms: Modality combinations to compare. ``None`` compares each modality alone
-            against the two fused, which is what makes the multimodal claim testable.
+        arms: Modality combinations to compare. ``None`` derives them from
+            ``DATASET.MODALITIES``; see :func:`resolve_arms`.
 
     Returns:
         Per-arm fold summaries, keyed by the arm's name.
     """
+    # Everything that can be checked without data is checked before any is loaded.
+    check_model_name(cfg)
+    check_endpoint(cfg)
+    arms = resolve_arms(cfg, arms)
+
     set_seed(cfg.SOLVER.SEED)
     out_dir = ensure_dir(cfg.OUTPUT.OUT_DIR)
     (out_dir / "config.yaml").write_text(cfg.dump(), encoding="utf-8")
 
     cohort = load_cohort(cfg)
     logger.info("cohort: %s", cohort.describe())
+    write_json(out_dir / "cohort.json", summarise(cohort, cfg.ENDPOINT.NAME))
 
-    pretrained = pretrain(cfg, cohort, out_dir)
-    arms = arms if arms is not None else [(ECG,), (CXR,), (ECG, CXR)]
+    pretrained = load_pretrained(cfg, cohort) if cfg.MODEL.PRETRAINED else pretrain(cfg, cohort, out_dir)
     assignments = splits(cfg, cohort)
 
     results: dict = {}
@@ -342,8 +450,11 @@ def run(cfg, arms: Sequence[Sequence[str]] | None = None) -> dict:
             fold_predictions.append(outcome["predictions"])
             logger.info("%s fold %d: %s", name, fold, _headline(cfg, outcome["metrics"]))
 
+            # Reporting is kept off the training's random stream, so turning it on
+            # or off cannot change the models trained after it.
             if cfg.OUTPUT.INTERPRET and fold == len(assignments) - 1:
-                interpret(cfg, trained, test_loader, arm_dir)
+                with preserve_rng_state():
+                    interpret(cfg, trained, test_loader, arm_dir)
             release_workers(test_loader)
 
         summary = summarise_folds(fold_metrics)
@@ -359,7 +470,7 @@ def run(cfg, arms: Sequence[Sequence[str]] | None = None) -> dict:
 
 def _headline(cfg, metrics: Mapping, folded: bool = False) -> str:
     """One line naming the metric that matters for this endpoint."""
-    key = "rmse" if cfg.ENDPOINT.REGRESSION else "roc_auc"
+    key = headline_metric(cfg)
     if not folded:
         return f"{key}={metrics.get(key, float('nan')):.3f}"
     entry = metrics.get(key, {})

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import numpy as np
 import pytest
 import pytorch_lightning as pl
 import torch
@@ -166,6 +167,46 @@ class TestFineTuning:
         assert "valid_r2" in trainer.callback_metrics
 
 
+class TestMulticlass:
+    @pytest.fixture
+    def three_class_loader(self, cohort, ecg_source, loader_factory):
+        from kalecardiac.loaddata import ColumnTarget
+
+        # Tertiles of the measured value: a learnable three-class endpoint with every
+        # class present in a 40-subject cohort.
+        cuts = np.quantile([cohort.values[name] for name in cohort.subject_id], [1 / 3, 2 / 3])
+        classes = {name: int(np.searchsorted(cuts, cohort.values[name])) for name in cohort.subject_id}
+        sources = {lead: source for lead, source in lead_sources(ecg_source).items() if lead in ("I", "II")}
+        dataset = MultimodalDataset(cohort.subject_id, sources, target=ColumnTarget.from_mapping({"label": classes}))
+        return loader_factory(dataset, batch_size=8)
+
+    @pytest.fixture
+    def three_class_trainer(self, vae):
+        task = ClassificationTask(num_classes=3, hidden_dims=())
+        return CardiacTrainer(MultimodalPredictor(vae.latent_embedders(["I", "II"]), task.build_head), task)
+
+    def test_logs_a_macro_auc_over_the_whole_split(self, three_class_trainer, three_class_loader):
+        trainer = lightning_trainer()
+        trainer.fit(three_class_trainer, three_class_loader, three_class_loader)
+        assert 0.0 <= float(trainer.callback_metrics["valid_auc"]) <= 1.0
+
+    def test_the_epoch_holds_one_row_of_probabilities_per_subject(self, three_class_trainer, three_class_loader):
+        for batch in three_class_loader:
+            three_class_trainer.compute_loss(batch, "valid")
+        assert torch.cat(three_class_trainer._epoch_scores["valid"]).shape == (40, 3)
+        assert torch.cat(three_class_trainer._epoch_targets["valid"]["label"]).shape == (40,)
+
+    def test_a_task_scoring_the_wrong_number_of_subjects_is_named(self, vae, lead_loader):
+        class Duplicating(ClassificationTask):
+            def scores(self, output):
+                return output.prediction.reshape(-1).repeat(2)
+
+        task = Duplicating(hidden_dims=())
+        model = CardiacTrainer(MultimodalPredictor(vae.latent_embedders(), task.build_head), task)
+        with pytest.raises(ValueError, match="one row per subject"):
+            model.compute_loss(next(iter(lead_loader)), "valid")
+
+
 class TestPrediction:
     def test_predict_tracks_no_gradients_and_restores_the_mode(self, vae, lead_loader):
         model = CardiacTrainer(vae, ReconstructionTask())
@@ -207,3 +248,45 @@ def _only(loader, names):
             return len(loader)
 
     return Restricted()
+
+
+class TestEvaluationLoops:
+    @pytest.fixture
+    def classifier(self, vae):
+        task = ClassificationTask(hidden_dims=())
+        return CardiacTrainer(MultimodalPredictor(vae.latent_embedders(["I", "II"]), task.build_head), task)
+
+    @pytest.fixture
+    def two_lead_loader(self, cohort, ecg_source, label_target, loader_factory):
+        sources = {lead: source for lead, source in lead_sources(ecg_source).items() if lead in ("I", "II")}
+        return loader_factory(MultimodalDataset(cohort.subject_id, sources, target=label_target), batch_size=8)
+
+    def test_the_test_loop_logs_the_task_metric_over_the_whole_split(self, classifier, two_lead_loader):
+        trainer = lightning_trainer()
+        trainer.test(classifier, two_lead_loader, verbose=False)
+        assert {"test_auc", "test_loss"} <= set(trainer.callback_metrics)
+
+    def test_a_one_class_validation_split_is_reported_and_skipped(
+        self, classifier, cohort, ecg_source, loader_factory, two_lead_loader, caplog
+    ):
+        # Ordinary on a small cohort: eight validation subjects can easily all be negative.
+        from kalecardiac.loaddata import ColumnTarget
+
+        negatives = ColumnTarget.from_mapping({"label": {name: 0 for name in cohort.subject_id}})
+        sources = {lead: source for lead, source in lead_sources(ecg_source).items() if lead in ("I", "II")}
+        one_class = loader_factory(MultimodalDataset(cohort.subject_id, sources, target=negatives), batch_size=8)
+
+        trainer = lightning_trainer()
+        with caplog.at_level("WARNING", logger="kalecardiac.pipeline.trainer"):
+            trainer.fit(classifier, two_lead_loader, one_class)
+        assert "valid auc unavailable" in caplog.text
+        assert "valid_auc" not in trainer.callback_metrics
+        assert "valid_loss" in trainer.callback_metrics
+
+    def test_a_generative_validation_reports_its_objective_and_no_metric(self, vae, lead_loader):
+        model = CardiacTrainer(vae, ReconstructionTask(scale_factor=1e-3))
+        trainer = lightning_trainer()
+        trainer.fit(model, lead_loader, lead_loader)
+        assert "valid_loss" in trainer.callback_metrics
+        # Its quality is the objective; there is no per-subject score to summarise.
+        assert not any(name.endswith(("_auc", "_r2")) for name in trainer.callback_metrics)

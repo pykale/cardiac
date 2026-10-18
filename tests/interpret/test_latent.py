@@ -153,3 +153,11 @@ def test_the_alignment_term_pulls_lead_latents_towards_the_joint(cohort, lead_da
 
     assert disagreement(aligned) < start
     assert disagreement(aligned) < disagreement(unaligned)
+
+
+class TestCollectLatentsDevice:
+    def test_a_named_device_is_used_and_the_result_is_the_same(self, vae, lead_dataset, loader_factory):
+        loader = loader_factory(lead_dataset, batch_size=8)
+        _, on_cpu, _ = collect_latents(vae, loader, device="cpu")
+        _, default, _ = collect_latents(vae, loader)
+        assert np.allclose(on_cpu, default)

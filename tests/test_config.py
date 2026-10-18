@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
+
 import pytest
 from yacs.config import CfgNode
 
@@ -90,3 +93,78 @@ class TestParseWeights:
     def test_an_empty_name_is_rejected(self):
         with pytest.raises(ValueError, match="expected 'name:weight'"):
             parse_weights([":10"])
+
+
+# --------------------------------------------------------------------------- #
+# Dead keys
+#
+# A configuration key nothing reads is worse than a missing one: a user sets it, the run
+# completes, and the setting silently had no effect. Six such keys once shipped here --
+# one of them documented in an example README as the way to load a checkpoint. These
+# tests make that impossible to reintroduce.
+# --------------------------------------------------------------------------- #
+
+ROOT = Path(__file__).resolve().parent.parent
+PACKAGE_CONFIG = ROOT / "kalecardiac" / "config.py"
+EXAMPLES = ("cardiovae_multimodal", "lsemvae_ecg")
+
+#: ``cfg.SECTION.KEY`` used as a value. An assignment (``cfg.SECTION.KEY = ...``) is not
+#: a read, so setting a key in an example's config does not count as using it.
+_READ = r"\.{section}\.{key}\b(?!\s*=(?!=))"
+
+
+def _declared(source: str, prefix: str) -> list[tuple[str, str]]:
+    """``(SECTION, KEY)`` pairs assigned as ``<prefix>.SECTION.KEY = ...``."""
+    # MULTILINE so that a ``^`` in ``prefix`` anchors at every line, not only the first.
+    return sorted(set(re.findall(rf"{prefix}\.([A-Z_]+)\.([A-Z_]+)\s*=(?!=)", source, re.MULTILINE)))
+
+
+def _is_read(section: str, key: str, text: str) -> bool:
+    return re.search(_READ.format(section=section, key=key), text) is not None
+
+
+class TestNoDeadKeys:
+    def test_every_package_key_is_read_somewhere(self):
+        keys = _declared(PACKAGE_CONFIG.read_text(encoding="utf-8"), r"^_C")
+        assert keys, "found no keys in kalecardiac/config.py -- has the declaration style changed?"
+
+        readers = [
+            path
+            for root in (ROOT / "kalecardiac", ROOT / "examples")
+            for path in root.rglob("*.py")
+            if path.resolve() != PACKAGE_CONFIG
+        ]
+        text = "\n".join(path.read_text(encoding="utf-8") for path in readers)
+        dead = [f"{section}.{key}" for section, key in keys if not _is_read(section, key, text)]
+        assert not dead, (
+            f"{dead} are declared in kalecardiac/config.py but nothing reads them, so setting them silently "
+            f"does nothing. Wire each into the code it configures, or remove it from the schema."
+        )
+
+    @pytest.mark.parametrize("example", EXAMPLES)
+    def test_every_key_an_example_sets_is_read_by_that_example(self, example):
+        folder = ROOT / "examples" / example
+        keys = _declared((folder / "config.py").read_text(encoding="utf-8"), r"\bcfg")
+        text = "\n".join(path.read_text(encoding="utf-8") for path in folder.glob("*.py") if path.name != "config.py")
+        dead = [f"{section}.{key}" for section, key in keys if not _is_read(section, key, text)]
+        assert not dead, (
+            f"examples/{example}/config.py sets {dead}, but nothing in that example reads them. A user editing "
+            f"them would see no effect. Read each where it applies, or stop setting it."
+        )
+
+    @pytest.mark.parametrize("yaml_path", sorted((ROOT / "examples").rglob("*.yaml")), ids=lambda path: path.name)
+    def test_every_shipped_yaml_merges_into_its_example(self, yaml_path):
+        # A key removed from the schema but left in a shipped YAML would break that
+        # configuration only when someone ran it, which is too late.
+        example = yaml_path.parent.parent.name
+        module = __import__(f"examples.{example}.config", fromlist=["get_cfg_defaults"])
+        module.get_cfg_defaults().merge_from_file(str(yaml_path))
+
+    def test_the_guard_catches_a_dead_key(self):
+        # The guard itself must not be vacuous.
+        source = "_C.SECTION = CfgNode()\n_C.SECTION.LIVE = 1\n_C.SECTION.DEAD = 2\n"
+        keys = _declared(source, r"^_C")
+        assert keys == [("SECTION", "DEAD"), ("SECTION", "LIVE")]
+        uses = "x = cfg.SECTION.LIVE\ncfg.SECTION.DEAD = 3\n"
+        assert _is_read("SECTION", "LIVE", uses)
+        assert not _is_read("SECTION", "DEAD", uses), "an assignment must not count as a read"

@@ -35,6 +35,7 @@ from kalecardiac.prepdata import (
     crop_or_pad,
     interpolate_missing,
     lead_selector,
+    resample,
     standardise,
 )
 
@@ -60,6 +61,7 @@ class LeadCohort:
         pretrain_leads: Lead names the pretraining model encodes, in expert order.
         finetune_leads: Lead names the downstream model reads.
         synthetic: Whether these cohorts were generated rather than read.
+        num_classes: Classes of the endpoint; 2 for a threshold.
     """
 
     pretrain_sources: dict[str, ModalitySource]
@@ -72,6 +74,7 @@ class LeadCohort:
     pretrain_leads: tuple[str, ...]
     finetune_leads: tuple[str, ...]
     synthetic: bool
+    num_classes: int = 2
 
     def frame(self) -> pd.DataFrame:
         """The table a splitter splits."""
@@ -79,23 +82,31 @@ class LeadCohort:
 
     def describe(self) -> str:
         """One line summarising what was assembled."""
-        positives = int(self.table["label"].sum()) if "label" in self.table else 0
         origin = "synthetic" if self.synthetic else "local"
         return (
             f"{origin}: {len(self.pretrain_ids)} unlabelled subjects x {len(self.pretrain_leads)} leads for "
-            f"pretraining, {len(self.labelled_ids)} labelled ({positives} positive) x "
+            f"pretraining, {len(self.labelled_ids)} labelled ({_balance_text(self.table, self.num_classes)}) x "
             f"{len(self.finetune_leads)} leads for fine-tuning | {self.length} samples per lead"
         )
 
 
+def source_rate(cfg) -> float:
+    """Rate the recordings arrive at: ``ECG.SOURCE_SAMPLING_RATE``, or the model's own."""
+    return float(cfg.ECG.SOURCE_SAMPLING_RATE or cfg.ECG.SAMPLING_RATE)
+
+
 def signal_pipeline(cfg) -> SignalPipeline:
-    """Preprocessing for one recording: interpolate, crop or pad, standardise per lead.
+    """Preprocessing for one recording: interpolate, resample, crop or pad, standardise.
 
     The order matters. Interpolation must come first because a NaN spreads through
-    everything after it; standardisation must come last because statistics taken over
-    samples that are then cropped away describe a recording the model never sees.
+    everything after it, a resample included; standardisation must come last because
+    statistics taken over samples that are then cropped away describe a recording the
+    model never sees. Every step is per lead, so no step mixes one lead into another.
     """
-    steps = [interpolate_missing, partial(crop_or_pad, length=cfg.ECG.LENGTH)]
+    steps = [interpolate_missing]
+    if source_rate(cfg) != cfg.ECG.SAMPLING_RATE:
+        steps.append(partial(resample, source_rate=source_rate(cfg), target_rate=cfg.ECG.SAMPLING_RATE))
+    steps.append(partial(crop_or_pad, length=cfg.ECG.LENGTH))
     if cfg.ECG.STANDARDISE:
         steps.append(partial(standardise, per_channel=True))
     return SignalPipeline(steps)
@@ -187,7 +198,7 @@ def load_local(cfg) -> LeadCohort:
         )
 
     table = pd.read_csv(table_path)
-    for column in (SUBJECT_COLUMN, cfg.ENDPOINT.VALUE_COLUMN):
+    for column in (SUBJECT_COLUMN, endpoint_column(cfg)):
         if column not in table.columns:
             raise ValueError(f"{table_path} has no column {column!r}; available: {list(table.columns)}")
     table[SUBJECT_COLUMN] = table[SUBJECT_COLUMN].astype(str)
@@ -224,7 +235,7 @@ def load_synthetic(cfg) -> LeadCohort:
         num_subjects=cfg.SYNTHETIC.NUM_SUBJECTS * 2,
         leads=pretrain_leads,
         num_samples=cfg.SYNTHETIC.NUM_SAMPLES,
-        sampling_rate=cfg.ECG.SAMPLING_RATE,
+        sampling_rate=source_rate(cfg),
         with_images=False,
         seed=cfg.SOLVER.SEED,
     )
@@ -232,7 +243,7 @@ def load_synthetic(cfg) -> LeadCohort:
         num_subjects=cfg.SYNTHETIC.NUM_SUBJECTS,
         leads=pretrain_leads,
         num_samples=cfg.SYNTHETIC.NUM_SAMPLES,
-        sampling_rate=cfg.ECG.SAMPLING_RATE,
+        sampling_rate=source_rate(cfg),
         with_images=False,
         seed=cfg.SOLVER.SEED + 100,
     )
@@ -246,6 +257,12 @@ def load_synthetic(cfg) -> LeadCohort:
             cfg.ENDPOINT.VALUE_COLUMN: [labelled.values[name] for name in labelled.subject_id],
         }
     )
+    if cfg.ENDPOINT.LABEL_COLUMN:
+        # A recorded class, made learnable by binning the same measurement the threshold
+        # would use into equally populated classes.
+        table[cfg.ENDPOINT.LABEL_COLUMN] = pd.qcut(
+            table[cfg.ENDPOINT.VALUE_COLUMN], int(cfg.ENDPOINT.NUM_CLASSES), labels=False
+        )
     return _assemble(
         cfg, table, pretrain, finetune, list(unlabelled.subject_id), pretrain_leads, finetune_leads, synthetic=True
     )
@@ -270,15 +287,7 @@ def _assemble(
     if table.empty:
         raise ValueError("no labelled subject survived the join between the cohort table and the recordings")
 
-    values = pd.to_numeric(table[cfg.ENDPOINT.VALUE_COLUMN], errors="coerce")
-    known = values.notna()
-    if not bool(known.all()):
-        logger.info("dropping %d subjects with no recorded %s", int((~known).sum()), cfg.ENDPOINT.VALUE_COLUMN)
-        table = table[known].reset_index(drop=True)
-        values = values[known].reset_index(drop=True)
-
-    table["value"] = values.astype(float)
-    table["label"] = (values > cfg.ENDPOINT.THRESHOLD).astype(int)
+    table = derive_endpoint(cfg, table)
     columns = {"value": "value"} if cfg.ENDPOINT.REGRESSION else {"label": "label"}
 
     return LeadCohort(
@@ -292,11 +301,106 @@ def _assemble(
         pretrain_leads=pretrain_leads,
         finetune_leads=finetune_leads,
         synthetic=synthetic,
+        num_classes=int(cfg.ENDPOINT.NUM_CLASSES),
     )
+
+
+def check_endpoint(cfg) -> None:
+    """Reject an endpoint that cannot be built, before any data is read.
+
+    Raises:
+        ValueError: If the class count, where the class is read from and the task
+            disagree, naming the setting to change.
+    """
+    num_classes = int(cfg.ENDPOINT.NUM_CLASSES)
+    if num_classes < 2:
+        raise ValueError(f"ENDPOINT.NUM_CLASSES must be at least 2, got {num_classes}")
+    if cfg.ENDPOINT.REGRESSION:
+        if cfg.ENDPOINT.LABEL_COLUMN or num_classes != 2:
+            raise ValueError(
+                "ENDPOINT.REGRESSION predicts ENDPOINT.VALUE_COLUMN itself and has no classes; leave "
+                "ENDPOINT.LABEL_COLUMN empty and ENDPOINT.NUM_CLASSES at 2, or set ENDPOINT.REGRESSION False"
+            )
+        return
+    if num_classes > 2 and not cfg.ENDPOINT.LABEL_COLUMN:
+        raise ValueError(
+            f"a threshold on {cfg.ENDPOINT.VALUE_COLUMN} defines two classes, not {num_classes}; set "
+            f"ENDPOINT.LABEL_COLUMN to a column of class indices 0..{num_classes - 1}"
+        )
+    if num_classes > 2 and cfg.OBJECTIVE.POS_WEIGHT > 0:
+        raise ValueError(
+            f"OBJECTIVE.POS_WEIGHT weights the positive class of a binary endpoint, and this one has {num_classes} "
+            f"classes; leave it 0 to weight every class from the training fold, or set it negative for no weighting"
+        )
+
+
+def endpoint_column(cfg) -> str:
+    """The column of the cohort table the endpoint is read from."""
+    return cfg.ENDPOINT.LABEL_COLUMN or cfg.ENDPOINT.VALUE_COLUMN
+
+
+def derive_endpoint(cfg, table: pd.DataFrame) -> pd.DataFrame:
+    """Add the ``label`` and ``value`` columns the endpoint is supervised and stratified on.
+
+    The label is a threshold on ``ENDPOINT.VALUE_COLUMN``, or is read from
+    ``ENDPOINT.LABEL_COLUMN`` where the cohort records the class directly. A subject with
+    no recorded endpoint is dropped rather than assumed negative, and the run logs how
+    many were.
+
+    Raises:
+        ValueError: If no subject has the endpoint, or a recorded class is not one of
+            ``0 .. ENDPOINT.NUM_CLASSES - 1``.
+    """
+    column = endpoint_column(cfg)
+    recorded = pd.to_numeric(table[column], errors="coerce")
+    known = recorded.notna()
+    if not bool(known.all()):
+        logger.info("dropping %d subjects with no recorded %s", int((~known).sum()), column)
+        table = table[known].reset_index(drop=True)
+        recorded = recorded[known].reset_index(drop=True)
+    if table.empty:
+        raise ValueError(f"no subject has a recorded {column}, so there is no endpoint to fine-tune on")
+
+    table = table.copy()
+    if not cfg.ENDPOINT.LABEL_COLUMN:
+        table["value"] = recorded.astype(float)
+        table["label"] = (recorded > cfg.ENDPOINT.THRESHOLD).astype(int)
+        return table
+
+    num_classes = int(cfg.ENDPOINT.NUM_CLASSES)
+    invalid = sorted(set(recorded[(recorded % 1 != 0) | (recorded < 0) | (recorded >= num_classes)].tolist()))
+    if invalid:
+        raise ValueError(
+            f"{column} records {invalid[:5]}, which are not class indices 0..{num_classes - 1}; encode the classes "
+            f"as integers from 0, or set ENDPOINT.NUM_CLASSES to how many there are"
+        )
+    table["label"] = recorded.astype(int)
+    # The measurement, where the table has it, is kept for the record; it does not
+    # supervise a classification read from a column.
+    if cfg.ENDPOINT.VALUE_COLUMN in table:
+        table["value"] = pd.to_numeric(table[cfg.ENDPOINT.VALUE_COLUMN], errors="coerce").astype(float)
+    return table
+
+
+def class_balance(table: pd.DataFrame, num_classes: int) -> dict:
+    """How the labelled subjects divide between the classes, for a record or a log line."""
+    labels = table["label"].to_numpy(dtype=int)
+    if num_classes > 2:
+        return {"class_counts": np.bincount(labels, minlength=num_classes).tolist()}
+    return {"n_positive": int(labels.sum()), "positive_rate": float(labels.mean())}
+
+
+def _balance_text(table: pd.DataFrame, num_classes: int) -> str:
+    """The class balance as a phrase: ``"12 positive"`` or ``"classes 8/8/8"``."""
+    balance = class_balance(table, num_classes)
+    if "class_counts" in balance:
+        return "classes " + "/".join(str(count) for count in balance["class_counts"])
+    return f"{balance['n_positive']} positive"
 
 
 def load_cohort(cfg) -> LeadCohort:
     """Read the cohorts from disk, or generate them when no root is configured."""
+    check_endpoint(cfg)
     if cfg.DATASET.ROOT:
         return load_local(cfg)
     logger.warning(
@@ -313,8 +417,7 @@ def summarise(cohort: LeadCohort, endpoint: str) -> dict:
         "synthetic": cohort.synthetic,
         "n_pretrain": len(cohort.pretrain_ids),
         "n_labelled": len(cohort.labelled_ids),
-        "n_positive": int(cohort.table["label"].sum()),
-        "positive_rate": float(cohort.table["label"].mean()),
+        **class_balance(cohort.table, cohort.num_classes),
         "pretrain_leads": list(cohort.pretrain_leads),
         "finetune_leads": list(cohort.finetune_leads),
         "samples_per_lead": cohort.length,

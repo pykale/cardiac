@@ -10,6 +10,9 @@ Three paths, each the shortest complete statement of something the package claim
    fine-tune it on a *subset* of the leads, which is the transfer both cardiac studies
    rest on.
 
+And one claim about all of them: that a binary or a graded endpoint is learned clearly
+above chance when the recordings carry it, and not at all when they do not.
+
 Every one runs on generated data in a few seconds on a CPU, and none touches the
 network or the private cohorts the studies were developed on.
 """
@@ -23,7 +26,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from examples.synthetic_data import make_synthetic_multimodal_data
-from kalecardiac.evaluate import binary_metrics, predict_split, roc_auc, save_predictions
+from kalecardiac.evaluate import binary_metrics, multiclass_metrics, predict_split, roc_auc, save_predictions
 from kalecardiac.interpret import attribution_ratios, modality_ablation, modality_attributions
 from kalecardiac.loaddata import (
     ColumnTarget,
@@ -323,3 +326,72 @@ def test_a_missing_lead_does_not_stop_a_prediction(generated):
 
     assert torch.isfinite(reduced).all()
     assert not torch.allclose(complete, reduced)
+
+
+def _supervised_auc(num_classes: int, effect: float, seed: int) -> float:
+    """Train an ECG classifier from scratch on a fresh cohort, and score its test split.
+
+    Large enough -- 144 subjects, 43 of them tested -- that the score is a measurement
+    rather than the luck of a dozen subjects. A graded endpoint is made the way a
+    clinical one is: equally populated bins of the measurement.
+    """
+    cohort = make_synthetic_multimodal_data(
+        num_subjects=144, num_samples=LENGTH, with_images=False, effect=effect, seed=seed
+    )
+    set_seed(seed)
+    labels = cohort.labels
+    if num_classes > 2:
+        cuts = np.quantile(list(cohort.values.values()), np.arange(1, num_classes) / num_classes)
+        labels = {name: int(np.searchsorted(cuts, value)) for name, value in cohort.values.items()}
+
+    source = ECGArraySource(
+        cohort.ecg,
+        leads=cohort.leads,
+        sampling_rate=cohort.sampling_rate,
+        transform=build_ecg_pipeline(length=LENGTH, sampling_rate=cohort.sampling_rate),
+    )
+    target = ColumnTarget.from_mapping({"label": labels})
+    frame = target.frame(cohort.subject_id)
+    split = next(
+        HoldOut(test_size=0.3, val_size=0.2, group_by="subject_id", stratify_by=["label"], random_state=seed).split(
+            frame
+        )
+    )
+
+    def build(name, shuffle=False):
+        identifiers = sorted(frame.iloc[split[name]]["subject_id"])
+        return loader(MultimodalDataset(identifiers, {"ecg": source}, target=target), shuffle=shuffle)
+
+    task = ClassificationTask(num_classes=num_classes, hidden_dims=(16,))
+    encoder = build_signal_encoder("conv", len(cohort.leads), LENGTH, channels=(4, 8))
+    predictor = MultimodalPredictor({"ecg": FeatureEmbedder(encoder, out_dim=16)}, task.build_head)
+    model = fit(predictor, task, (build("train", shuffle=True), build("val")), epochs=10, lr=3e-3)
+
+    predictions = predict_split(model, build("test"))
+    if num_classes > 2:
+        return multiclass_metrics(predictions.targets["label"], predictions.scores)["roc_auc_ovr"]
+    return roc_auc(predictions.targets["label"], predictions.scores)
+
+
+@pytest.mark.parametrize("num_classes", [2, 3], ids=["binary", "three-class"])
+def test_a_working_pipeline_scores_clearly_above_chance(num_classes):
+    """The claim the synthetic cohorts exist to make checkable.
+
+    Every other test here asserts that a score is *a* number between 0 and 1. This one
+    asserts it is a good one when there is something to learn: a pipeline whose scores
+    and labels have come apart -- misaligned subjects, a wrong lead, one class's column
+    read as the whole prediction -- runs to completion and scores about 0.5. Averaged
+    over three cohorts, because one test split of 43 subjects is still a noisy ruler.
+    """
+    assert np.mean([_supervised_auc(num_classes, effect=1.0, seed=seed) for seed in range(3)]) > 0.7
+
+
+@pytest.mark.parametrize("num_classes", [2, 3], ids=["binary", "three-class"])
+def test_an_unlearnable_endpoint_scores_about_chance(num_classes):
+    """The counterpart: with no signal there is nothing to find.
+
+    A cohort whose endpoint is independent of its recordings must score near 0.5. Well
+    above it would mean the endpoint reached the model some other way -- a class weight
+    taken over the test split, a label in the presence mask -- which is a leak.
+    """
+    assert abs(np.mean([_supervised_auc(num_classes, effect=0.0, seed=seed) for seed in range(3)]) - 0.5) < 0.15

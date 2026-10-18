@@ -36,7 +36,7 @@ as :func:`~kalecardiac.model.predict.latent_alignment_loss`, because it is a pro
 the objective rather than of the architecture.
 
 Two documented departures from the reference implementation
----------------------------------------------------------
+-----------------------------------------------------------
 
 **The prior expert is no longer discarded.** Its grouping computed
 ``group_size = num_experts // num_groups`` and then took ``num_groups`` slices of that
@@ -76,6 +76,9 @@ class LSEMVAE(MultimodalVAE):
         length: Samples per lead.
         latent_dim: Width of the shared latent space.
         channels: Encoder channel widths; the decoder reverses them.
+        kernel_size: Kernel width of every convolutional encoder layer. The shared
+            decoder keeps the kernel that doubles the length exactly. Ignored by a
+            non-convolutional ``encoder``.
         encoder: Signal backbone for each lead, by name; see
             :data:`~kalecardiac.model.embed.SIGNAL_ENCODERS`.
         fusion: Latent fusion. ``"hime"`` is the published model; ``"poe"`` and
@@ -96,6 +99,7 @@ class LSEMVAE(MultimodalVAE):
         length: int = 5000,
         latent_dim: int = 256,
         channels: Sequence[int] = (16, 32, 64),
+        kernel_size: int = 3,
         encoder: str = "conv",
         fusion: str = "hime",
         num_groups: int = 4,
@@ -108,7 +112,7 @@ class LSEMVAE(MultimodalVAE):
         encoders: dict[str, nn.Module] = {}
         for name in names:
             backbone = (
-                build_signal_encoder(encoder, in_channels=1, length=length, channels=channels)
+                build_signal_encoder(encoder, in_channels=1, length=length, channels=channels, kernel_size=kernel_size)
                 if encoder == "conv"
                 else build_signal_encoder(encoder, in_channels=1, length=length)
             )
@@ -141,6 +145,7 @@ class LSEMVAE(MultimodalVAE):
             use_prior=use_prior,
             **fusion_kwargs,
         )
+        self.kernel_size = int(kernel_size)
         self.leads = names
         self.length = int(length)
         self.shared_decoder = bool(shared_decoder)
