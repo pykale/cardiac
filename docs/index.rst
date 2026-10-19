@@ -26,6 +26,7 @@ which verifies that a workflow executes and is never a result.
    architecture
    models
    multimodal_fusion
+   migration_contract
 
 .. toctree::
    :maxdepth: 2

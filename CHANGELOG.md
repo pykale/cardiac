@@ -8,6 +8,9 @@ Notable changes to KaleCardiac. The format follows
 
 ### Added
 
+- A pre-migration inventory of Gaussian fusion and evaluation APIs, their result
+  schemas and behavior, plus a per-subject missing-expert parity test. CI now runs for
+  pull requests targeting the `migration/pykale-core` integration branch.
 - **Multiclass endpoints, end to end.** `multiclass_roc_auc` (macro one-versus-rest, so
   a rare class weighs as much as a common one). `ClassificationTask` monitors it when
   `num_classes > 2`, and the trainer accumulates a row of class probabilities per

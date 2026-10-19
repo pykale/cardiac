@@ -8,6 +8,8 @@ load  →  preprocess  →  embed  →  fuse  →  predict  →  evaluate  →  
 
 For *why* it is shaped this way, see [docs/architecture.md](docs/architecture.md). For a
 running example, [docs/quickstart.md](docs/quickstart.md).
+The pre-migration fusion and evaluation behavior is recorded in
+[docs/migration_contract.md](docs/migration_contract.md).
 
 ---
 

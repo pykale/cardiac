@@ -246,6 +246,28 @@ class TestPriorExpert:
 
 class TestRegistry:
     @pytest.mark.parametrize("method", sorted(EXPERT_FUSIONS))
+    def test_per_subject_masks_ignore_absent_experts_and_their_gradients(self, method):
+        # Different subjects lose different experts in the same batch. Keep the
+        # expert axis intact because hierarchical fusion depends on its order.
+        mean = torch.tensor(
+            [[[1.0], [2.0], [3.0]], [[4.0], [5.0], [6.0]], [[7.0], [8.0], [9.0]]],
+            requires_grad=True,
+        )
+        log_var = torch.zeros_like(mean, requires_grad=True)
+        mask = torch.tensor([[1, 0, 1], [0, 1, 1], [1, 1, 0]], dtype=torch.bool)
+        fuse = build_expert_fusion(method, **({"num_groups": 2} if method == "hime" else {}))
+
+        fused = fuse(mean, log_var, mask)
+        changed_absent = mean.detach() + (~mask).unsqueeze(-1) * 1000.0
+        assert torch.allclose(fused.mean, fuse(changed_absent, log_var.detach(), mask).mean)
+        fused.mean.sum().backward()
+
+        assert fused.mean.shape == (3, 1)
+        assert mean.grad is not None
+        assert torch.equal(mean.grad[~mask], torch.zeros_like(mean.grad[~mask]))
+        assert bool((mean.grad[mask] > 0).all())
+
+    @pytest.mark.parametrize("method", sorted(EXPERT_FUSIONS))
     def test_every_registered_fusion_returns_a_posterior(self, method, experts):
         mean, log_var = experts
         fuse = build_expert_fusion(method, **({"num_groups": 2} if method == "hime" else {}))

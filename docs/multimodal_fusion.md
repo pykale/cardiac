@@ -49,7 +49,8 @@ special case. That is what lets a model trained on twelve leads run on six.
 `tests/model/layers/test_gaussian.py` asserts that masking an expert gives the same
 result as removing it.
 
-**The prior expert:** a standard-normal expert is included by default. It keeps a
+**The prior expert:** `MultimodalVAE` includes a standard-normal expert by default for
+`poe` and `hime`; the low-level fusion functions do not insert one. It keeps a
 single-modality posterior proper, and gives a subject with *no* present modality a
 defined result instead of a zero-divided-by-zero one — the convention since Wu and
 Goodman (2018).
@@ -197,3 +198,4 @@ something a model inferred from zeros.
 - [models.md](models.md) — which fusion each published model uses
 - [architecture.md](architecture.md) — where the fusion stage sits in the pipeline
 - `tests/model/layers/test_gaussian.py` — every property above, asserted
+- [migration_contract.md](migration_contract.md) — public fusion and evaluation behavior to preserve during the PyKale migration
