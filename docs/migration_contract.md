@@ -1,6 +1,14 @@
 # Fusion and evaluation migration contract
 
-This records KaleCardiac's public behavior before shared implementations move to PyKale. The names below remain importable from KaleCardiac during migration. A PyKale replacement should pass the existing tests and the per-subject mask test without changing scientific results.
+This records KaleCardiac's public behavior before shared implementations move to PyKale. The names below remain importable from KaleCardiac during migration. For supported binary masks, matching floating dtypes and finite nonnegative weights, a PyKale replacement should pass the existing tests and the per-subject mask test without changing scientific results. Invalid inputs may now raise stricter errors, as described below.
+
+## Core-backed adoption in progress
+
+The Gaussian averaging, barycenter, grouping and hierarchical functions now delegate their calculations to the proposed PyKale APIs while keeping KaleCardiac's import paths and `GaussianPosterior` return type. `product_of_experts` already delegates its calculation to PyKale's `ProductOfExperts`. KaleCardiac retains `EXPERT_FUSIONS`, `build_expert_fusion`, prior insertion in its models, and its existing validation messages for invalid weight shapes and negative weights.
+
+The inventory below records the original migration candidates. It does not mean that `GaussianPosterior` or KaleCardiac's `product_of_experts` wrapper will move to core; PyKale returns tensor pairs, while Cardiac keeps those application-facing APIs.
+
+This adapter work is being tested against the PyKale development branch behind [PR #609](https://github.com/pykale/pykale/pull/609) and [PR #613](https://github.com/pykale/pykale/pull/613). KaleCardiac's minimum `pykale` version remains unchanged until those APIs are merged and released; before merging the adoption PR, install the released version in a clean environment, update the dependency floor, and rerun the full test suite and synthetic examples. PyKale rejects non-binary masks, mismatched floating dtypes and non-finite weights, so Cardiac adoption tests make those input changes explicit.
 
 ## Public API inventory
 
@@ -8,7 +16,7 @@ This records KaleCardiac's public behavior before shared implementations move to
 
 `kalecardiac.model.layers.gaussian` defines these names. They are also exported from `kalecardiac.model.layers`.
 
-**Candidates for PyKale core**
+**Original migration candidates (for reference)**
 
 - `GaussianPosterior`: frozen mean and log-variance pair with `.variance`, `.stddev`, `.sample()`, `.detach()` and `.to()`.
 - `product_of_experts`: masked Gaussian precision product.
@@ -26,7 +34,7 @@ This records KaleCardiac's public behavior before shared implementations move to
 - `GaussianHead`: keep with the Cardiac encoders until encoder ownership is decided.
 - `ABSENT_LOG_VAR`: preserve its current value of `20.0` for compatibility.
 
-When a core candidate moves, keep its Cardiac import path as a compatibility re-export.
+When a core candidate moves, keep its Cardiac import path through a compatibility adapter so that the `GaussianPosterior` return type remains available.
 
 ### Evaluation
 
