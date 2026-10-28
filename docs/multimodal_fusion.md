@@ -43,9 +43,9 @@ joint mean         = sum(weight × expert mean)
 joint log-variance = sum(weight × expert log-variance)
 ```
 
-Averaging the parameters, not mixing the distributions: a true mixture of Gaussians is not Gaussian, and the moment-matched average is what keeps the KL term in closed form.
+Averaging means and log-variances gives one Gaussian for a closed-form KL term. This is neither a probability mixture of Gaussians nor a moment-matched approximation of one.
 
-**What follows:** no expert can dominate. A confident modality and an uninformative one contribute equally, which keeps a weak modality from being ignored — and keeps a noisy one from being discounted.
+**What follows:** with equal weights, a confident modality and an uninformative one contribute equally. Explicit weights can change their shares; confidence alone does not.
 
 **When it fits:** the modalities are of comparable reliability, or a product's tendency to be dominated by one over-confident encoder is the failure being avoided.
 
@@ -53,7 +53,7 @@ Averaging the parameters, not mixing the distributions: a true mixture of Gaussi
 
 ### Hierarchical modality experts (`hime`)
 
-A product **within** contiguous groups of experts, then a mixture **across** the groups. LS-EMVAE's mechanism.
+A product **within** contiguous groups of experts, then an equal parameter average **across** the available group posteriors. LS-EMVAE's mechanism.
 
 For twelve leads with a prior and four groups, the groups are:
 
@@ -66,15 +66,15 @@ For twelve leads with a prior and four groups, the groups are:
 
 The four resulting group posteriors are averaged.
 
-**What follows:** the joint gains the sharpness of a product without letting one over-confident group determine the latent on its own. It sits between the two in certainty, which `tests/model/layers/test_gaussian.py` asserts directly:
+**What follows:** within each group, confident experts have more influence. The group means and log-variances then receive equal shares. The tests check a representative case in which the hierarchical variance falls between product and parameter-average variances:
 
 ```python
 product_variance <= hierarchical_variance <= mixture_variance
 ```
 
-Two degenerate cases are worth knowing, and both are tested: one group reduces to a product, and groups of one reduce to a mixture.
+Two degenerate cases are worth knowing, and both are tested: one group reduces to a product, and groups of one reduce to the parameter average.
 
-**Grouping is contiguous over the expert axis**, so the order experts are stacked in decides which reinforce which. For an ECG in conventional lead order that puts the limb leads in the early groups and the precordial leads in the later ones, which is anatomically sensible. A different order is a different grouping, and therefore a modelling choice worth stating. A group whose experts are all absent takes no share of the mixture.
+**Grouping is contiguous over the expert axis**, so the order experts are stacked in decides which reinforce which. For an ECG in conventional lead order that puts the limb leads in the early groups and the precordial leads in the later ones, which is anatomically sensible. A different order is a different grouping, and therefore a modelling choice worth stating. A group whose experts are all absent takes no share of the average.
 
 > **A correction to the reference implementation.** Its grouping computed `group_size = M // num_groups` and took `num_groups` slices of that width, silently discarding the last `M % num_groups` experts. With twelve leads plus the prior and four groups that dropped the prior entirely. `expert_groups` distributes the remainder instead, so the group sizes are `[4, 3, 3, 3]` and every expert is used. See [models.md](models.md#documented-departures).
 
@@ -87,7 +87,7 @@ joint mean               = sum(weight × expert mean)
 joint standard deviation = sum(weight × expert standard deviation)
 ```
 
-For diagonal Gaussians this is the 2-Wasserstein barycenter. It sits between the other two: unlike a product it cannot become more certain than its experts, and unlike a parameter-averaged mixture it averages in the scale a distance is measured in. Two experts with variances 1 and 9 give a barycenter variance of 4, not the variance mean of 5 — which the tests check directly.
+For diagonal Gaussians this is the 2-Wasserstein barycenter. Unlike a product, it cannot become more certain than every available expert; unlike a parameter average of log-variances, it averages in the scale a distance is measured in. Two equally weighted experts with variances 1 and 9 give a barycenter variance of 4, an arithmetic variance average of 5, and a log-variance parameter average corresponding to variance 3. The tests check the barycenter calculation directly.
 
 ### Choosing one
 
