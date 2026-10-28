@@ -207,12 +207,12 @@ class TestHierarchicalExperts:
         fused = hierarchical_experts(mean, log_var, num_groups=1)
         assert torch.allclose(fused.mean, product_of_experts(mean, log_var).mean, atol=1e-5)
 
-    def test_groups_of_one_reduce_to_a_mixture(self, experts):
+    def test_groups_of_one_reduce_to_the_parameter_average(self, experts):
         mean, log_var = experts
         fused = hierarchical_experts(mean, log_var, num_groups=mean.shape[0])
         assert torch.allclose(fused.mean, mixture_of_experts(mean, log_var).mean, atol=1e-4)
 
-    def test_it_sits_between_a_product_and_a_mixture_in_certainty(self, experts):
+    def test_its_variance_is_between_product_and_parameter_average_for_these_experts(self, experts):
         mean, log_var = experts
         product = product_of_experts(mean, log_var).variance.mean()
         mixture = mixture_of_experts(mean, log_var).variance.mean()
@@ -317,6 +317,26 @@ class TestShapeValidation:
     def test_mismatched_mean_and_log_var_are_rejected(self):
         with pytest.raises(ValueError, match="same shape"):
             product_of_experts(torch.zeros(2, 3, 4), torch.zeros(2, 3, 5))
+
+    @pytest.mark.parametrize(
+        "fusion", [mixture_of_experts, mean_of_experts, wasserstein_barycenter, hierarchical_experts]
+    )
+    def test_core_backed_fusions_reject_invalid_inputs(self, fusion):
+        mean = torch.zeros(2, 1, 1)
+        with pytest.raises(TypeError, match="mean and log_var must be tensors"):
+            fusion([[0.0]], mean)
+        with pytest.raises(TypeError, match="mask must be a tensor"):
+            fusion(mean, mean, mask=[[1], [0]])
+        with pytest.raises(ValueError, match="zero or one"):
+            fusion(mean, mean, mask=torch.tensor([[0.5], [1.0]]))
+        with pytest.raises(TypeError, match="same floating dtype"):
+            fusion(mean, mean.double())
+
+    @pytest.mark.parametrize("fusion", [mixture_of_experts, wasserstein_barycenter])
+    def test_core_backed_averaging_rejects_nonfinite_weights(self, fusion):
+        mean = torch.zeros(2, 1, 1)
+        with pytest.raises(ValueError, match="finite"):
+            fusion(mean, mean, weights=torch.tensor([1.0, float("nan")]))
 
 
 class TestGaussianHead:

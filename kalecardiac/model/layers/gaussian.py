@@ -2,14 +2,14 @@
 
 Every multimodal VAE in this package is the same model with a different answer to one
 question: *given one diagonal Gaussian per modality, what is the joint posterior?*
-This module holds the answers, as functions of stacked tensors that know nothing about
-modalities, leads or cohorts.
+This module keeps the Cardiac-facing functions and posterior type; reusable Gaussian
+calculations live in PyKale core.
 
 .. code-block:: text
 
     product_of_experts     precision-weighted product; a confident expert dominates
-    mixture_of_experts     weighted arithmetic mean; every expert contributes
-    hierarchical_experts   product within groups, mixture across them  (HiME)
+    mixture_of_experts     weighted parameter average of available experts
+    hierarchical_experts   product within groups, parameter average across them (HiME)
     mean_of_experts        unweighted mean, the plainest baseline
     wasserstein_barycenter mean of means and of standard deviations
 
@@ -21,11 +21,11 @@ configuration change.
 **Every function takes the same shapes.** ``mean`` and ``log_var`` are ``(M, B, D)``
 for ``M`` experts, and the optional ``mask`` is ``(M, B)``, one where that expert is
 present for that sample. A masked-out expert contributes nothing -- negligible
-precision to a product, zero weight to a mixture -- which is how a model trained on
+precision to a product, zero share to an average -- which is how a model trained on
 twelve leads runs on six without being retrained.
 
-:func:`product_of_experts` delegates to :class:`kale.embed.multimodal_fusion.ProductOfExperts`,
-PyKale's implementation of the same closed form.
+The fusion functions delegate their calculations to :mod:`kale.embed.multimodal_fusion`
+while keeping Cardiac's public names and :class:`GaussianPosterior` result.
 """
 
 from __future__ import annotations
@@ -35,6 +35,11 @@ from dataclasses import dataclass
 
 import torch
 from kale.embed.multimodal_fusion import ProductOfExperts
+from kale.embed.multimodal_fusion import expert_groups as _core_expert_groups
+from kale.embed.multimodal_fusion import hierarchical_experts as _core_hierarchical_experts
+from kale.embed.multimodal_fusion import mean_of_experts as _core_mean_of_experts
+from kale.embed.multimodal_fusion import mixture_of_experts as _core_mixture_of_experts
+from kale.embed.multimodal_fusion import wasserstein_barycenter as _core_wasserstein_barycenter
 from torch import Tensor
 
 #: Log-variance assigned to an absent expert. ``exp(20)`` is a variance of about 5e8,
@@ -145,6 +150,8 @@ def prior_expert(shape: Sequence[int], device: torch.device | str = "cpu", dtype
 
 def _check(mean: Tensor, log_var: Tensor, mask: Tensor | None) -> Tensor:
     """Validate expert tensors and return a usable ``(M, B)`` float mask."""
+    if not isinstance(mean, Tensor) or not isinstance(log_var, Tensor):
+        raise TypeError("mean and log_var must be tensors")
     if mean.shape != log_var.shape:
         raise ValueError(f"mean and log_var must have the same shape, got {mean.shape} and {log_var.shape}")
     if mean.dim() != 3:
@@ -153,6 +160,8 @@ def _check(mean: Tensor, log_var: Tensor, mask: Tensor | None) -> Tensor:
         raise ValueError("need at least one expert to fuse")
     if mask is None:
         return torch.ones(mean.shape[:2], device=mean.device, dtype=mean.dtype)
+    if not isinstance(mask, Tensor):
+        raise TypeError("mask must be a tensor")
     if mask.shape != mean.shape[:2]:
         raise ValueError(f"mask must be {tuple(mean.shape[:2])}, got {tuple(mask.shape)}")
     return mask.to(device=mean.device, dtype=mean.dtype)
@@ -164,34 +173,14 @@ def _mask_experts(mean: Tensor, log_var: Tensor, mask: Tensor) -> tuple[Tensor, 
     return mean * (1.0 - absent), log_var * (1.0 - absent) + ABSENT_LOG_VAR * absent
 
 
-def _normalised_share(mask: Tensor, weights: Tensor | None) -> Tensor:
-    """Per-expert weights that sum to one over the expert axis, honouring ``mask``.
-
-    Shared by every averaging fusion, so that "an absent expert takes no share" is
-    implemented once.
-
-    Raises:
-        ValueError: If ``weights`` has the wrong shape or a negative entry.
-    """
-    if weights is None:
-        share = mask
-    else:
-        weights = weights.to(device=mask.device, dtype=mask.dtype)
-        # Checked before expanding: expand_as would otherwise raise a RuntimeError
-        # about tensor sizes, which does not say that the expert count is wrong.
-        if weights.dim() == 1 and weights.shape[0] == mask.shape[0]:
-            weights = weights.unsqueeze(1).expand_as(mask)
-        if weights.shape != mask.shape:
-            raise ValueError(f"weights must be ({mask.shape[0]},) or {tuple(mask.shape)}, got {tuple(weights.shape)}")
-        if bool((weights < 0).any()):
-            raise ValueError("weights must be non-negative")
-        share = weights * mask
-
-    # A sample with nothing present would divide by zero; falling back to equal weights
-    # over every expert returns an average rather than a NaN, and the caller's mask
-    # already says the result is not evidence.
-    share = torch.where(share.sum(dim=0, keepdim=True) > 0, share, torch.ones_like(share))
-    return share / share.sum(dim=0, keepdim=True).clamp_min(EPS)
+def _check_weights(weights: Tensor | None, mask: Tensor) -> None:
+    """Keep Cardiac's weight validation messages at its public API boundary."""
+    if not isinstance(weights, Tensor):
+        return
+    if not (weights.ndim == 1 and weights.shape[0] == mask.shape[0]) and weights.shape != mask.shape:
+        raise ValueError(f"weights must be ({mask.shape[0]},) or {tuple(mask.shape)}, got {tuple(weights.shape)}")
+    if bool((weights < 0).any()):
+        raise ValueError("weights must be non-negative")
 
 
 def product_of_experts(mean: Tensor, log_var: Tensor, mask: Tensor | None = None) -> GaussianPosterior:
@@ -230,30 +219,40 @@ def mixture_of_experts(
 ) -> GaussianPosterior:
     """Fuse experts as a weighted arithmetic mean of their parameters.
 
-    Averaging the parameters, not mixing the distributions: a true mixture of Gaussians
-    is not Gaussian, and the moment-matched average is what a VAE needs to keep the KL
-    term in closed form. The trade against a product is that no expert can dominate --
-    a confident one and an uninformative one contribute equally -- which keeps a weak
-    modality from being ignored, and keeps a noisy one from being discounted.
+    This averages means and log-variances; it neither represents a probability mixture
+    nor matches that mixture's moments. The result remains Gaussian, so its KL term
+    has a closed form. With equal weights, confidence does not change an expert's
+    share; explicit weights can assign different shares.
 
     Args:
-        mean: ``(M, B, D)`` expert means.
-        log_var: ``(M, B, D)`` expert log-variances.
-        mask: ``(M, B)``, one where the expert is present. Absent experts take no share
-            of the weight, and a sample with no present expert falls back to the
-            unweighted mean rather than dividing by zero.
-        weights: ``(M,)`` or ``(M, B)`` relative weights, normalised internally.
-            ``None`` weights the experts equally.
+        mean (Tensor): Expert means of shape ``(M, B, D)``.
+        log_var (Tensor): Expert log-variances of the same shape and floating dtype.
+        mask (Tensor, optional): Boolean or zero/one availability of shape ``(M, B)``.
+            Absent experts have zero share; if no expert has effective weight, all
+            supplied experts receive equal share.
+        weights (Tensor, optional): Finite, nonnegative relative weights of shape
+            ``(M,)`` or ``(M, B)``. ``None`` weights available experts equally.
 
     Returns:
-        The ``(B, D)`` joint posterior.
+        GaussianPosterior: Joint posterior of shape ``(B, D)``.
 
     Raises:
-        ValueError: If the shapes are inconsistent, or a weight is negative.
+        TypeError: If tensor kinds or floating dtypes are invalid.
+        ValueError: If shapes, mask values, or weights are invalid.
+
+    Example:
+
+        .. code-block:: pycon
+
+            >>> mean = torch.tensor([[[1.0]], [[5.0]]])
+            >>> log_var = torch.zeros_like(mean)
+            >>> mixture_of_experts(mean, log_var, weights=torch.tensor([1.0, 3.0])).mean
+            tensor([[4.]])
     """
     mask = _check(mean, log_var, mask)
-    share = _normalised_share(mask, weights).unsqueeze(-1)
-    return GaussianPosterior((share * mean).sum(dim=0), (share * log_var).sum(dim=0))
+    _check_weights(weights, mask)
+    joint_mean, joint_log_var = _core_mixture_of_experts(mean, log_var, mask=mask, weights=weights)
+    return GaussianPosterior(joint_mean, joint_log_var)
 
 
 def mean_of_experts(mean: Tensor, log_var: Tensor, mask: Tensor | None = None) -> GaussianPosterior:
@@ -263,14 +262,29 @@ def mean_of_experts(mean: Tensor, log_var: Tensor, mask: Tensor | None = None) -
     plainest possible fusion and so the baseline an ablation compares against.
 
     Args:
-        mean: ``(M, B, D)`` expert means.
-        log_var: ``(M, B, D)`` expert log-variances.
-        mask: ``(M, B)``, one where the expert is present.
+        mean (Tensor): Expert means of shape ``(M, B, D)``.
+        log_var (Tensor): Expert log-variances of the same shape and floating dtype.
+        mask (Tensor, optional): Boolean or zero/one availability of shape ``(M, B)``.
 
     Returns:
-        The ``(B, D)`` joint posterior.
+        GaussianPosterior: Joint posterior of shape ``(B, D)``.
+
+    Raises:
+        TypeError: If tensor kinds or floating dtypes are invalid.
+        ValueError: If shapes or mask values are invalid.
+
+    Example:
+
+        .. code-block:: pycon
+
+            >>> mean = torch.tensor([[[1.0]], [[5.0]]])
+            >>> log_var = torch.zeros_like(mean)
+            >>> mean_of_experts(mean, log_var, mask=torch.tensor([[True], [False]])).mean
+            tensor([[1.]])
     """
-    return mixture_of_experts(mean, log_var, mask=mask)
+    mask = _check(mean, log_var, mask)
+    joint_mean, joint_log_var = _core_mean_of_experts(mean, log_var, mask=mask)
+    return GaussianPosterior(joint_mean, joint_log_var)
 
 
 def wasserstein_barycenter(
@@ -283,26 +297,37 @@ def wasserstein_barycenter(
 
     For diagonal Gaussians the barycenter has the weighted mean of the means and the
     weighted mean of the *standard deviations* -- not of the variances, and not of the
-    precisions. It therefore sits between a product and a mixture: unlike a product it
-    cannot become more certain than its experts, and unlike a parameter-averaged
-    mixture it averages in the scale a distance is measured in.
+    precisions. Unlike a product, it cannot become more certain than every available
+    expert; unlike a parameter average of log-variances, it averages in the scale a
+    distance is measured in.
 
     Args:
-        mean: ``(M, B, D)`` expert means.
-        log_var: ``(M, B, D)`` expert log-variances.
-        mask: ``(M, B)``, one where the expert is present.
-        weights: ``(M,)`` or ``(M, B)`` relative weights. ``None`` weights equally.
+        mean (Tensor): Expert means of shape ``(M, B, D)``.
+        log_var (Tensor): Expert log-variances of the same shape and floating dtype.
+        mask (Tensor, optional): Boolean or zero/one availability of shape ``(M, B)``.
+        weights (Tensor, optional): Finite, nonnegative relative weights of shape
+            ``(M,)`` or ``(M, B)``. ``None`` weights available experts equally.
 
     Returns:
-        The ``(B, D)`` joint posterior.
+        GaussianPosterior: Joint posterior of shape ``(B, D)``.
+
+    Raises:
+        TypeError: If tensor kinds or floating dtypes are invalid.
+        ValueError: If shapes, mask values, or weights are invalid.
+
+    Example:
+
+        .. code-block:: pycon
+
+            >>> mean = torch.tensor([[[1.0]], [[5.0]]])
+            >>> log_var = torch.log(torch.tensor([[[1.0]], [[9.0]]]))
+            >>> wasserstein_barycenter(mean, log_var).stddev
+            tensor([[2.]])
     """
     mask = _check(mean, log_var, mask)
-    share = _normalised_share(mask, weights).unsqueeze(-1)
-    barycentre_mean = (share * mean).sum(dim=0)
-    # The scale is averaged as a standard deviation, which is what makes this a
-    # barycenter rather than a variance- or precision-weighted average.
-    barycentre_stddev = (share * torch.exp(0.5 * log_var)).sum(dim=0)
-    return GaussianPosterior(barycentre_mean, 2.0 * torch.log(barycentre_stddev.clamp_min(EPS)))
+    _check_weights(weights, mask)
+    joint_mean, joint_log_var = _core_wasserstein_barycenter(mean, log_var, mask=mask, weights=weights)
+    return GaussianPosterior(joint_mean, joint_log_var)
 
 
 def expert_groups(num_experts: int, num_groups: int) -> list[list[int]]:
@@ -317,30 +342,25 @@ def expert_groups(num_experts: int, num_groups: int) -> list[list[int]]:
     consequence.
 
     Args:
-        num_experts: How many experts there are.
-        num_groups: How many groups to form. Clamped to ``num_experts`` so that asking
-            for more groups than experts gives one expert per group rather than empty
-            groups.
+        num_experts (int): Positive number of experts.
+        num_groups (int): Positive number of groups. Clamped to ``num_experts`` so
+            that requesting more groups than experts gives one expert per group.
 
     Returns:
-        Expert indices per group, in order.
+        list[list[int]]: Expert indices per group, in order.
 
     Raises:
-        ValueError: If either argument is below one.
-    """
-    if num_experts < 1:
-        raise ValueError(f"need at least one expert, got {num_experts}")
-    if num_groups < 1:
-        raise ValueError(f"need at least one group, got {num_groups}")
+        TypeError: If either count is not an integer.
+        ValueError: If either count is below one.
 
-    num_groups = min(num_groups, num_experts)
-    size, remainder = divmod(num_experts, num_groups)
-    groups, start = [], 0
-    for index in range(num_groups):
-        width = size + (1 if index < remainder else 0)
-        groups.append(list(range(start, start + width)))
-        start += width
-    return groups
+    Example:
+
+        .. code-block:: pycon
+
+            >>> expert_groups(13, 4)
+            [[0, 1, 2, 3], [4, 5, 6], [7, 8, 9], [10, 11, 12]]
+    """
+    return _core_expert_groups(num_experts, num_groups)
 
 
 def hierarchical_experts(
@@ -349,7 +369,7 @@ def hierarchical_experts(
     mask: Tensor | None = None,
     num_groups: int = 4,
 ) -> GaussianPosterior:
-    """Fuse experts hierarchically: a product within groups, a mixture across them.
+    """Multiply Gaussian experts within groups, then average the group parameters.
 
     The hierarchical modality expert (HiME) mechanism of LS-EMVAE. Experts that should
     reinforce one another are multiplied, and the group summaries are then averaged, so
@@ -362,36 +382,33 @@ def hierarchical_experts(
     ones, which is anatomically sensible; a caller stacking leads in another order is
     choosing another grouping, and should say so.
 
-    A group whose experts are all absent takes no share of the mixture.
+    A group whose experts are all absent takes no share of the parameter average.
 
     Args:
-        mean: ``(M, B, D)`` expert means.
-        log_var: ``(M, B, D)`` expert log-variances.
-        mask: ``(M, B)``, one where the expert is present.
-        num_groups: Groups to divide the experts into.
+        mean (Tensor): Expert means of shape ``(M, B, D)``.
+        log_var (Tensor): Expert log-variances of the same shape and floating dtype.
+        mask (Tensor, optional): Boolean or zero/one availability of shape ``(M, B)``.
+        num_groups (int): Positive number of contiguous groups, defaulting to four.
 
     Returns:
-        The ``(B, D)`` joint posterior.
+        GaussianPosterior: Joint posterior of shape ``(B, D)``.
 
     Raises:
-        ValueError: If the shapes are inconsistent, or ``num_groups`` is below one.
+        TypeError: If tensor kinds or floating dtypes are invalid, or ``num_groups`` is not an integer.
+        ValueError: If expert inputs, mask values, or the group count are invalid.
+
+    Example:
+
+        .. code-block:: pycon
+
+            >>> mean = torch.tensor([[[1.0]], [[3.0]], [[9.0]], [[11.0]]])
+            >>> log_var = torch.zeros_like(mean)
+            >>> hierarchical_experts(mean, log_var, num_groups=2).mean
+            tensor([[6.]])
     """
     mask = _check(mean, log_var, mask)
-    groups = expert_groups(mean.shape[0], num_groups)
-
-    group_means, group_log_vars, group_present = [], [], []
-    for indices in groups:
-        index = torch.tensor(indices, device=mean.device, dtype=torch.long)
-        fused = product_of_experts(
-            mean.index_select(0, index), log_var.index_select(0, index), mask.index_select(0, index)
-        )
-        group_means.append(fused.mean)
-        group_log_vars.append(fused.log_var)
-        # A group contributes if any of its experts does, so a subject missing one lead
-        # still has that lead's group represented by its siblings.
-        group_present.append(mask.index_select(0, index).amax(dim=0))
-
-    return mixture_of_experts(torch.stack(group_means), torch.stack(group_log_vars), mask=torch.stack(group_present))
+    joint_mean, joint_log_var = _core_hierarchical_experts(mean, log_var, mask=mask, num_groups=num_groups)
+    return GaussianPosterior(joint_mean, joint_log_var)
 
 
 #: Latent fusion mechanisms, by name. Each takes ``(mean, log_var, mask)`` and any
