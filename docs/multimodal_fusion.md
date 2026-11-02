@@ -139,4 +139,3 @@ This is how a cardiac model is taught to survive its own deployment: a reduced-l
 - [models.md](models.md) — which fusion each published model uses
 - [architecture.md](architecture.md) — where the fusion stage sits in the pipeline
 - `tests/model/layers/test_gaussian.py` — every property above, asserted
-- [migration_contract.md](migration_contract.md) — public fusion and evaluation behavior to preserve during the PyKale migration
