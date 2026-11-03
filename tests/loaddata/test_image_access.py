@@ -166,11 +166,17 @@ class TestReadDicom:
         dicom_writers.write_dicom_image(tmp_path / "s1" / "1" / "DICOM" / "00000000.dcm", GRADIENT, patient_id="s1")
         assert read_dicom(tmp_path / "s1").PatientID == "s1"
 
-    def test_a_folder_is_read_without_pykales_bookkeeping_warning(self, dicom_writers, tmp_path):
+    def test_a_folder_is_read_without_pykales_bookkeeping_warning(self, dicom_writers, tmp_path, caplog):
+        import pydicom
+
         dicom_writers.write_dicom_image(tmp_path / "s1" / "x.dcm", GRADIENT)
-        with warnings.catch_warnings():
+        behavior = pydicom.config.INVALID_KEYWORD_BEHAVIOR
+        # pydicom reports it twice: as a warning, and as a record on its logger.
+        with warnings.catch_warnings(), caplog.at_level("WARNING", logger="pydicom"):
             warnings.simplefilter("error")
             read_dicom(tmp_path / "s1")
+        assert not caplog.records
+        assert behavior == pydicom.config.INVALID_KEYWORD_BEHAVIOR
 
     def test_reads_a_file_by_its_path(self, dicom_writers, tmp_path):
         path = dicom_writers.write_dicom_image(tmp_path / "x.dcm", GRADIENT, patient_id="x")

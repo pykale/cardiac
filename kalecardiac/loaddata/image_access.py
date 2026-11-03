@@ -27,7 +27,6 @@ it would make them wrong for both.
 
 from __future__ import annotations
 
-import warnings
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -135,11 +134,15 @@ def read_dicom(path: str | Path) -> Dataset:
         return pydicom.dcmread(path)
     if not path.is_dir():
         raise FileNotFoundError(f"no DICOM file or folder at {path}")
-    with warnings.catch_warnings():
-        # PyKale's reader records each file's path on its dataset as FilePath, which pydicom
-        # warns is not a DICOM keyword. It says nothing about the file, so it is not shown.
-        warnings.filterwarnings("ignore", message="Camel case attribute 'FilePath'", category=UserWarning)
+    # PyKale's reader records each file's path on its dataset as FilePath, which pydicom reports, as a warning
+    # and a log record, is not a DICOM keyword. It says nothing about the file, so pydicom's check is off while
+    # PyKale reads.
+    behavior = pydicom.config.INVALID_KEYWORD_BEHAVIOR
+    pydicom.config.INVALID_KEYWORD_BEHAVIOR = "IGNORE"
+    try:
         datasets = read_dicom_phases(str(path), sort_instance=False)
+    finally:
+        pydicom.config.INVALID_KEYWORD_BEHAVIOR = behavior
     if not datasets:
         raise FileNotFoundError(f"no .dcm file under {path}")
     if len(datasets) > 1:
