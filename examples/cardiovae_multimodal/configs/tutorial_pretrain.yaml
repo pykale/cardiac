@@ -1,0 +1,27 @@
+# Pretraining in the CardioVAE tutorial, tutorials/cardiac-abnormality-assessment/tutorial-CardioVAE.ipynb.
+#
+# Merged onto this example's defaults (config.py), so the model is this example's CardioVAE:
+# a ten-second twelve-lead ECG at 500 Hz interleaved into one 60,000-sample channel, its leads
+# taken by name in ECG.LEADS' order, a 224-pixel chest X-ray, and the tri-stream objective.
+# What changes is the cohort and the schedule: a few epochs on the tutorial dataset's
+# unlabelled pairs.
+#
+# The tutorial dataset is DICOM, one folder per subject, which the notebook reads with
+# ECGFileSource.from_dicom and ImageFileSource.from_dicom. This example's command line reads
+# the layout in its README instead, so run this configuration through the notebook.
+DATASET:
+  ROOT: "data/kalecardiac_pretraining"
+
+MODEL:
+  LATENT_DIM: 128
+
+OBJECTIVE:
+  ANNEALING_EPOCHS: 10
+
+SOLVER:
+  SEED: 123
+  MAX_EPOCHS: 10
+  BATCH_SIZE: 4
+
+OUTPUT:
+  OUT_DIR: "outputs/cardiovae_tutorial/pretraining"

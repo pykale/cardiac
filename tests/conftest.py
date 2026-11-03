@@ -24,7 +24,7 @@ from kalecardiac.loaddata import (
     ImageArraySource,
     MultimodalDataset,
     collate_subjects,
-    lead_sources,
+    get_lead_sources,
 )
 
 #: Kept small enough that a five-fold split still leaves both classes in every fold.
@@ -70,7 +70,7 @@ def label_target(cohort):
 @pytest.fixture
 def lead_dataset(cohort, ecg_source, label_target):
     """One modality per lead, which is what a lead-specific model consumes."""
-    return MultimodalDataset(cohort.subject_id, lead_sources(ecg_source), target=label_target)
+    return MultimodalDataset(cohort.subject_id, get_lead_sources(ecg_source), target=label_target)
 
 
 @pytest.fixture
@@ -109,6 +109,20 @@ def binary_scores():
     labels = generator.integers(0, 2, size=60)
     scores = generator.normal(size=60) + labels
     return labels, scores
+
+
+@pytest.fixture
+def dicom_writers():
+    """The synthetic DICOM writers -- skipping the test where the ``imaging`` extra is absent.
+
+    Reading DICOM goes through PyKale's reader, which imports scikit-image as well as
+    pydicom, so both are required.
+    """
+    pytest.importorskip("pydicom")
+    pytest.importorskip("skimage")
+    import examples.synthetic_data as writers
+
+    return writers
 
 
 @pytest.fixture(autouse=True)

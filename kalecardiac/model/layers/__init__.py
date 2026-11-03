@@ -18,6 +18,8 @@ modalities, leads or cohorts -- which is what separates it from
 from the others only in which function there it fuses its experts with.
 """
 
+from typing import TYPE_CHECKING
+
 from kalecardiac.model.layers.conv1d import Conv1dDecoder, Conv1dEncoder, conv_output_length
 from kalecardiac.model.layers.conv2d import Conv2dDecoder, Conv2dEncoder, conv_output_size
 from kalecardiac.model.layers.gaussian import (
@@ -26,18 +28,19 @@ from kalecardiac.model.layers.gaussian import (
     GaussianHead,
     GaussianPosterior,
     build_expert_fusion,
-    expert_groups,
+    get_expert_groups,
     hierarchical_experts,
     mean_of_experts,
     mixture_of_experts,
     prior_expert,
     product_of_experts,
-    reparameterise,
+    reparameterize,
     wasserstein_barycenter,
 )
 from kalecardiac.model.layers.mlp import MLP
 from kalecardiac.model.layers.residual1d import ResidualBlock1d, ResidualConv1dEncoder
 from kalecardiac.model.layers.transformer import SinusoidalPositionalEncoding, TransformerSignalEncoder
+from kalecardiac.utils.renames import renamed
 
 __all__ = [
     "ABSENT_LOG_VAR",
@@ -56,16 +59,23 @@ __all__ = [
     "build_expert_fusion",
     "conv_output_length",
     "conv_output_size",
-    "expert_groups",
+    "get_expert_groups",
     "hierarchical_experts",
     "mean_of_experts",
     "mixture_of_experts",
     "prior_expert",
     "product_of_experts",
-    "reparameterise",
+    "reparameterize",
     "wasserstein_barycenter",
 ]
 
 
 def __dir__():
     return sorted(__all__)
+
+
+if not TYPE_CHECKING:
+    # At runtime only: a module-level __getattr__ that a type checker saw would make
+    # every misspelt import type-check.
+    def __getattr__(name: str):
+        raise renamed(__name__, name)

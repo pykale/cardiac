@@ -30,13 +30,13 @@ from kalecardiac.evaluate import binary_metrics, multiclass_metrics, predict_spl
 from kalecardiac.interpret import attribution_ratios, modality_ablation, modality_attributions
 from kalecardiac.loaddata import (
     ColumnTarget,
-    CrossValidation,
+    CrossValidationSplit,
     ECGArraySource,
-    HoldOut,
+    HoldOutSplit,
     ImageArraySource,
     MultimodalDataset,
     collate_subjects,
-    lead_sources,
+    get_lead_sources,
 )
 from kalecardiac.model.embed import (
     LSEMVAE,
@@ -46,7 +46,7 @@ from kalecardiac.model.embed import (
     build_signal_encoder,
 )
 from kalecardiac.pipeline import CardiacTrainer, ClassificationTask, ReconstructionTask
-from kalecardiac.prepdata import build_ecg_pipeline, build_image_pipeline
+from kalecardiac.prepdata import get_ecg_transform, get_image_transform
 from kalecardiac.utils import set_seed
 
 LENGTH = 128
@@ -90,13 +90,15 @@ def test_ecg_to_encoder_to_classifier_to_prediction(generated):
         generated.ecg,
         leads=generated.leads,
         sampling_rate=generated.sampling_rate,
-        transform=build_ecg_pipeline(length=LENGTH, sampling_rate=generated.sampling_rate),
+        transform=get_ecg_transform(length=LENGTH, sampling_rate=generated.sampling_rate),
     )
     target = ColumnTarget.from_mapping({"label": generated.labels})
     frame = target.frame(generated.subject_id)
 
     split = next(
-        HoldOut(test_size=0.3, val_size=0.2, group_by="subject_id", stratify_by=["label"], random_state=0).split(frame)
+        HoldOutSplit(test_size=0.3, val_size=0.2, group_by="subject_id", stratify_by=["label"], random_state=0).split(
+            frame
+        )
     )
     identifiers = {name: sorted(frame.iloc[split[name]]["subject_id"]) for name in ("train", "val", "test")}
 
@@ -137,7 +139,7 @@ def test_ecg_and_image_fuse_into_one_prediction(generated, tmp_path):
         generated.ecg,
         leads=generated.leads,
         sampling_rate=generated.sampling_rate,
-        transform=build_ecg_pipeline(length=LENGTH, sampling_rate=generated.sampling_rate),
+        transform=get_ecg_transform(length=LENGTH, sampling_rate=generated.sampling_rate),
     )
     # One subject has no image at all.
     without_image = generated.subject_id[0]
@@ -145,7 +147,7 @@ def test_ecg_and_image_fuse_into_one_prediction(generated, tmp_path):
         {name: value for name, value in generated.image.items() if name != without_image},
         channels=1,
         size=IMAGE,
-        transform=build_image_pipeline(size=IMAGE),
+        transform=get_image_transform(size=IMAGE),
     )
     target = ColumnTarget.from_mapping({"label": generated.labels})
 
@@ -177,7 +179,9 @@ def test_ecg_and_image_fuse_into_one_prediction(generated, tmp_path):
     # --- fine-tune onto the endpoint
     frame = target.frame(generated.subject_id)
     split = next(
-        HoldOut(test_size=0.3, val_size=0.2, group_by="subject_id", stratify_by=["label"], random_state=0).split(frame)
+        HoldOutSplit(test_size=0.3, val_size=0.2, group_by="subject_id", stratify_by=["label"], random_state=0).split(
+            frame
+        )
     )
     identifiers = {name: sorted(frame.iloc[split[name]]["subject_id"]) for name in ("train", "val", "test")}
 
@@ -213,9 +217,9 @@ def test_lead_specific_pretraining_transfers_to_a_lead_subset(generated):
         generated.ecg,
         leads=generated.leads,
         sampling_rate=generated.sampling_rate,
-        transform=build_ecg_pipeline(length=LENGTH, sampling_rate=generated.sampling_rate),
+        transform=get_ecg_transform(length=LENGTH, sampling_rate=generated.sampling_rate),
     )
-    every_lead = lead_sources(source)
+    every_lead = get_lead_sources(source)
     target = ColumnTarget.from_mapping({"label": generated.labels})
 
     # --- pretrain on all six leads, unlabelled
@@ -233,9 +237,9 @@ def test_lead_specific_pretraining_transfers_to_a_lead_subset(generated):
 
     frame = target.frame(generated.subject_id)
     folds = list(
-        CrossValidation(n_splits=3, val_size=0.2, group_by="subject_id", stratify_by=["label"], random_state=0).split(
-            frame
-        )
+        CrossValidationSplit(
+            n_splits=3, val_size=0.2, group_by="subject_id", stratify_by=["label"], random_state=0
+        ).split(frame)
     )
     identifiers = frame["subject_id"]
 
@@ -275,10 +279,10 @@ def test_lead_importance_is_reported_per_lead(generated):
         generated.ecg,
         leads=generated.leads,
         sampling_rate=generated.sampling_rate,
-        transform=build_ecg_pipeline(length=LENGTH, sampling_rate=generated.sampling_rate),
+        transform=get_ecg_transform(length=LENGTH, sampling_rate=generated.sampling_rate),
     )
     subset = ("I", "II", "aVF")
-    sources = {lead: lead_sources(source)[lead] for lead in subset}
+    sources = {lead: get_lead_sources(source)[lead] for lead in subset}
     target = ColumnTarget.from_mapping({"label": generated.labels})
 
     vae = LSEMVAE(leads=generated.leads, length=LENGTH, latent_dim=LATENT, channels=(4,))
@@ -307,7 +311,7 @@ def test_a_missing_lead_does_not_stop_a_prediction(generated):
     set_seed(0)
     source = ECGArraySource(generated.ecg, leads=generated.leads, sampling_rate=generated.sampling_rate)
     subset = ("I", "II", "III")
-    sources = {lead: lead_sources(source)[lead] for lead in subset}
+    sources = {lead: get_lead_sources(source)[lead] for lead in subset}
     target = ColumnTarget.from_mapping({"label": generated.labels})
 
     vae = LSEMVAE(
@@ -348,14 +352,14 @@ def _supervised_auc(num_classes: int, effect: float, seed: int) -> float:
         cohort.ecg,
         leads=cohort.leads,
         sampling_rate=cohort.sampling_rate,
-        transform=build_ecg_pipeline(length=LENGTH, sampling_rate=cohort.sampling_rate),
+        transform=get_ecg_transform(length=LENGTH, sampling_rate=cohort.sampling_rate),
     )
     target = ColumnTarget.from_mapping({"label": labels})
     frame = target.frame(cohort.subject_id)
     split = next(
-        HoldOut(test_size=0.3, val_size=0.2, group_by="subject_id", stratify_by=["label"], random_state=seed).split(
-            frame
-        )
+        HoldOutSplit(
+            test_size=0.3, val_size=0.2, group_by="subject_id", stratify_by=["label"], random_state=seed
+        ).split(frame)
     )
 
     def build(name, shuffle=False):

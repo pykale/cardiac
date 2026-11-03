@@ -10,10 +10,10 @@ PyKale 0.2 requires `torch<=2.6.0`, so a newer build would be replaced — then:
 
 ```bash
 python -m venv .venv
-.venv/bin/pip install -e ".[dev,interpret,ecg]"     # Windows: .venv/Scripts/pip
+.venv/bin/pip install -e ".[dev,interpret,ecg,imaging]"     # Windows: .venv/Scripts/pip
 ```
 
-`interpret` and `ecg` are the extras the tests exercise; without them a few tests skip.
+`interpret`, `ecg` and `imaging` are the extras the tests exercise; without them a few tests skip.
 
 Verify the install:
 
@@ -58,7 +58,7 @@ approved access can supply `DATASET.ROOT`. Document a schema; never commit one.
 
 ```
 kalecardiac/
-├── auto/        high-level construction (AutoCardiac* classes, planned)
+├── auto/        workflows read from a configuration: the endpoint, pretraining, fine-tuning over folds
 ├── loaddata/    access APIs per modality, plus subject-level splitting
 ├── prepdata/    transforms over signals and images
 ├── model/       layers/ blocks, embed/ encoders and models, predict/ heads and objectives
@@ -98,10 +98,10 @@ be a constructor argument, it is one.
 
 ```
 loaddata/
-├── ecg_access.py         ECGArraySource, ECGFileSource, LeadSource, lead_sources, the lead vocabulary
-├── image_access.py       ImageArraySource, ImageFileSource
+├── signal_access.py      ECGArraySource, ECGFileSource, LeadSource, get_lead_sources, the lead vocabulary
+├── image_access.py       ImageArraySource, ImageFileSource, and reading DICOM through PyKale's reader
 ├── multimodal_access.py  MultimodalDataset, ModalitySource, ColumnTarget, the record types
-└── splitting.py          HoldOut, CrossValidation, Predefined -- scikit-learn's shape
+└── splitting.py          HoldOutSplit, CrossValidationSplit, PredefinedSplit -- scikit-learn's shape
 ```
 
 Adding a modality is a dictionary entry. Adding a *kind* of modality is one
@@ -125,6 +125,14 @@ block in `layers/` and adapt it in `embed/`, never both at once.
 A splitter decides which subjects load into which loader; `prepdata/` is transforms. The
 thing that creates the folds cannot be state belonging to one. scikit-learn draws the
 same line between `model_selection` and `preprocessing`.
+
+### `auto/` is the one stage that reads a configuration
+
+Every other stage takes explicit arguments. `kalecardiac.auto` reads them from a
+`CfgNode` and holds what every experiment does with the same settings the same way: the
+endpoint a configured column defines, the task and metrics it implies, pretraining, and
+fine-tuning, scoring and interpreting over the folds. A step two examples would
+otherwise both write belongs here.
 
 ## Constraints
 
@@ -178,6 +186,9 @@ minute) and `configs/full.yaml` (the published setup).
 
 Examples run as modules from the repository root — `python -m examples.<name>.main` —
 so their imports resolve as ordinary packages. Do not add `sys.path` manipulation.
+What the examples share that is not a mechanism stays beside them: the synthetic cohorts
+in `examples/synthetic_data.py`, and the command line's group flag, configuration loading
+and results table in `examples/cli.py`.
 
 **An example composes the library; it never defines a model.** A test asserts that
 neither runner contains `nn.Module`:
@@ -191,13 +202,29 @@ model = LSEMVAE(leads=cfg.ECG.LEADS, fusion=cfg.FUSION.LATENT_METHOD)
 class LSEMVAE(nn.Module):    # 500 lines redefining what the library already has
 ```
 
-An example owns: configuration, cohort construction, endpoint definition, the fold
-structure, running the pipeline, and reporting.
+An example owns its configuration, its cohort construction -- where the files are and
+what the columns mean -- the model it builds from the cohort's shapes, what it compares,
+and any report of its own. The workflow is `kalecardiac.auto`'s: an example calls
+`pretrain` and `cross_validate` rather than copying them, and a test fails if a runner
+defines either again.
 
 ## Conventions
 
 - Follow [PyKale](https://github.com/pykale/pykale) conventions: verb-oriented stages,
   Google-style docstrings, type hints, YACS configuration.
+- **Name things as PyKale does.** Modules are named for the modality they serve
+  (`signal_access`, `image_access`, `signal_transform`). A function that acts starts with
+  a verb -- `load_`, `get_`, `check_`, `normalize_`, `interpolate_`, `resample_`; a
+  factory returning a transform is `get_<x>_transform`, one building a module is
+  `build_<x>`. Metrics and losses are nouns, as in scikit-learn and
+  `torch.nn.functional`. Splitters end in `Split`, as scikit-learn's do. Identifiers
+  use American spelling (`normalize`, `summarize`), as PyKale, scikit-learn and PyTorch
+  do; prose may stay British. Where PyKale has the function, use PyKale's name.
+- **Do not wrap what a dependency already provides.** Chain transforms with
+  `torchvision.transforms.Compose`; call PyTorch's losses directly; take class weights
+  from scikit-learn's `compute_class_weight`, metrics from `sklearn.metrics`, resampling
+  from `scipy.signal`, freezing from `module.requires_grad_`. Define something here
+  only when no dependency has it.
 - **Reuse PyKale APIs where one exists rather than reimplementing.** Where something is
   reimplemented — `Conv1dEncoder` over `SignalVAEEncoder`, `LinearHead` over
   `kale.predict.decode` — the reason is in the module docstring, and a test asserts the
@@ -207,7 +234,7 @@ structure, running the pipeline, and reporting.
 - New configuration belongs in `kalecardiac/config.py`, never hardcoded in a module —
   unless it names a dataset, in which case it belongs in an example's `config.py`.
 - An error message should say what to do next. `"crop or pad the cohort first; see
-  kalecardiac.prepdata.crop_or_pad"` beats `"shape mismatch"`.
+  kalecardiac.prepdata.crop_or_pad_signal"` beats `"shape mismatch"`.
 
 ## Adding a component
 

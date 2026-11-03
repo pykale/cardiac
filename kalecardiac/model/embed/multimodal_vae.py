@@ -36,7 +36,7 @@ consumes it is :class:`~kalecardiac.pipeline.ReconstructionTask`.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 
 import torch
@@ -297,7 +297,7 @@ class MultimodalVAE(nn.Module):
         supplied = {name: value for name, value in (present or {}).items() if name in posteriors}
         return VAEOutput(joint=joint, unimodal=unimodal, modality_posteriors=posteriors, present=supplied)
 
-    def latent_embedders(self, modalities: Mapping[str, Tensor] | None = None, frozen: bool = True) -> dict:
+    def latent_embedders(self, modalities: Iterable[str] | None = None, frozen: bool = True) -> dict:
         """Wrap this model's encoders as embedders, for fine-tuning onto an endpoint.
 
         The step between pretraining and prediction, in one call -- here fine-tuning on

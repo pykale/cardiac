@@ -5,7 +5,7 @@ gets reported is not one number but a distribution over folds. Two things follow
 both are here because both are routinely got wrong.
 
 **How folds are summarised.** The mean and standard deviation *over folds* is what both
-cardiac studies report, and it is what :func:`summarise_folds` computes. It is not the
+cardiac studies report, and it is what :func:`summarize_folds` computes. It is not the
 same as pooling every fold's predictions into one array and scoring that: the pooled
 figure weights subjects equally and the fold-wise mean weights folds equally, and for
 unequal folds they differ. Both are defensible; reporting one and describing the other
@@ -29,7 +29,7 @@ from numpy.typing import ArrayLike
 from kalecardiac.evaluate.classification_metrics import MetricError
 
 
-def summarise_folds(fold_metrics: Sequence[Mapping[str, float]], keys: Sequence[str] | None = None) -> dict:
+def summarize_folds(fold_metrics: Sequence[Mapping[str, float]], keys: Sequence[str] | None = None) -> dict:
     """Mean and standard deviation of each metric across folds.
 
     Args:
@@ -47,7 +47,7 @@ def summarise_folds(fold_metrics: Sequence[Mapping[str, float]], keys: Sequence[
     """
     folds = list(fold_metrics)
     if not folds:
-        raise MetricError("summarise_folds needs at least one fold")
+        raise MetricError("summarize_folds needs at least one fold")
 
     if keys is None:
         keys = [
@@ -70,6 +70,29 @@ def summarise_folds(fold_metrics: Sequence[Mapping[str, float]], keys: Sequence[
             "values": values.tolist(),
         }
     return summary
+
+
+def flatten_fold_summary(summary: Mapping) -> dict:
+    """A :func:`summarize_folds` summary as flat columns, for one row of a results table.
+
+    Each metric's mean and spread become a column of their own, and the per-fold values
+    stay in the summary::
+
+        >>> flatten_fold_summary(summarize_folds([{"roc_auc": 0.5}, {"roc_auc": 1.0}]))
+        {'n_folds': 2, 'roc_auc_mean': 0.75, 'roc_auc_std': 0.25}
+
+    Args:
+        summary: As :func:`summarize_folds` returns it.
+
+    Returns:
+        ``n_folds``, then ``<metric>_mean`` and ``<metric>_std`` for every metric.
+    """
+    flat = {"n_folds": summary.get("n_folds")}
+    for key, entry in summary.items():
+        if isinstance(entry, Mapping) and "mean" in entry:
+            flat[f"{key}_mean"] = entry["mean"]
+            flat[f"{key}_std"] = entry["std"]
+    return flat
 
 
 def bootstrap_ci(
@@ -144,7 +167,7 @@ def pool_folds(fold_predictions: Iterable) -> tuple[np.ndarray, np.ndarray]:
     """Concatenate every fold's labels and scores into one pair of arrays.
 
     The input to a *pooled* metric, which weights subjects equally where
-    :func:`summarise_folds` weights folds equally. In a cross-validation where every
+    :func:`summarize_folds` weights folds equally. In a cross-validation where every
     subject is tested exactly once, the pooled arrays cover the whole cohort, and a
     metric over them is the cohort-level figure.
 

@@ -90,7 +90,9 @@ makes it visible that no label reached the representation.
 
 **Lead ordering.** Recordings are stored in `ECG.LEADS` order, and the names are
 matched case-insensitively with any `LEAD_` prefix stripped, so `aVR`, `AVR` and
-`LEAD_aVR` are the same lead. This is not pedantry: in the reference implementation the
+`LEAD_aVR` are the same lead. `ECG.LEADS` defaults to the clinical order, I, II, III,
+aVR, aVL, aVF, V1–V6; declare your export's own order if it differs. MIMIC-IV-ECG's
+does: its records store aVF *before* aVL. This is not pedantry: in the reference implementation the
 lead list in the preprocessing script and the list the encoder indexes disagree — aVL
 and aVF are transposed between them — so a per-lead model learns aVL's representation
 from aVF's signal, and nothing crashes. Stating the order once and matching by name is
@@ -135,7 +137,7 @@ choice worth stating.
     ├── predictions.csv      one row per subject per fold
     ├── metrics.json         per-fold metrics and their summary
     ├── robustness.csv       the score with one lead fewer at each step, per fold
-    ├── lead_importance.csv  attribution ratio and share per lead
+    ├── attribution.csv      attribution ratio and share per lead
     └── interpretation.json  the same, with the ablation
 ```
 
@@ -145,7 +147,7 @@ that does not is one whose encoder has gone its own way.
 
 ## Reading the lead importance
 
-`lead_importance.csv` reports each lead's *integrated-gradient attribution ratio* — the
+`attribution.csv` reports each lead's *integrated-gradient attribution ratio* — the
 fraction of its samples whose normalised attribution clears a threshold — and that
 fraction's share of the total. The ablation beside it answers a different question: what
 the metric loses when the lead is withheld entirely.

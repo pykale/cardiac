@@ -34,7 +34,7 @@ _C.DATASET.NUM_WORKERS = 0
 # How the test set is chosen:
 #
 #   "predefined"  an assignment the dataset publishes or the study fixed, applied with
-#                 loaddata.Predefined. Preferred wherever one exists, because
+#                 loaddata.PredefinedSplit. Preferred wherever one exists, because
 #                 re-drawing the test set makes a result incomparable with other work.
 #   "cv"          NUM_FOLDS-fold cross-validation over the whole cohort. What both
 #                 cardiac use cases report, their cohorts being small.
@@ -52,6 +52,32 @@ _C.DATASET.GROUP_KEY = "subject_id"
 _C.DATASET.STRATIFY_KEYS = ["label"]
 
 # ---------------------------------------------------------------------------
+# Endpoint
+#
+# What a labelled cohort is fine-tuned to predict, read from a column of its table by
+# kalecardiac.auto.derive_endpoint. The column and the threshold are the cohort's
+# vocabulary, so every default here is empty and an experiment names its own.
+# ---------------------------------------------------------------------------
+_C.ENDPOINT = CfgNode()
+# Name the run records the endpoint under.
+_C.ENDPOINT.NAME = ""
+# Column holding the measurement the endpoint is defined on.
+_C.ENDPOINT.VALUE_COLUMN = ""
+# A subject is positive when the measurement lies strictly above this.
+_C.ENDPOINT.THRESHOLD = 0.0
+# Unit of the measurement, reported beside a regression's errors.
+_C.ENDPOINT.UNIT = ""
+# Predict the measurement itself rather than the threshold applied to it. Keeps the
+# information the threshold throws away, and is a RegressionTask instead.
+_C.ENDPOINT.REGRESSION = False
+# Classes the endpoint has. A threshold defines two; more need LABEL_COLUMN.
+_C.ENDPOINT.NUM_CLASSES = 2
+# Read the class from this column, of class indices 0..NUM_CLASSES-1, instead of
+# thresholding VALUE_COLUMN: a subtype, say, which takes more than one measurement to
+# define. Empty keeps the threshold.
+_C.ENDPOINT.LABEL_COLUMN = ""
+
+# ---------------------------------------------------------------------------
 # ECG
 #
 # The shape of the recordings a model is built for. No default asserts twelve leads
@@ -60,17 +86,24 @@ _C.DATASET.STRATIFY_KEYS = ["label"]
 # ---------------------------------------------------------------------------
 _C.ECG = CfgNode()
 # Lead names, in the order the cohort stores them. Empty means the experiment has not
-# declared them, which every ECG pipeline here requires it to do.
+# declared them, which every ECG pipeline here requires it to do. A cohort whose files
+# name their leads -- DICOM does -- is read by name, and this is the order the model
+# reads them in.
 _C.ECG.LEADS = []
-# Samples per lead after preprocessing, and the rate they are sampled at.
+# Samples per lead after preprocessing, and the rate they are sampled at. With
+# NUM_CHANNELS 1, the samples of the whole interleaved strip.
 _C.ECG.LENGTH = 5000
 _C.ECG.SAMPLING_RATE = 500
+# Channels each recording reaches the model with. 0 keeps one channel per lead; 1
+# interleaves the leads sample by sample into one channel, which is how CardioVAE reads
+# an ECG and what its published weights expect.
+_C.ECG.NUM_CHANNELS = 0
 # Rate the recordings arrive at, when it differs from SAMPLING_RATE and they must be
 # resampled. 0 means they already arrive at SAMPLING_RATE. Resampling runs per lead,
 # before any reshaping, so it never interpolates across the boundary between two leads.
 _C.ECG.SOURCE_SAMPLING_RATE = 0
 # Per-lead zero mean and unit variance, as both cardiac use cases apply.
-_C.ECG.STANDARDISE = True
+_C.ECG.NORMALIZE = True
 # Backbone each lead or each recording is encoded with; see
 # kalecardiac.model.embed.SIGNAL_ENCODERS.
 _C.ECG.ENCODER = "conv"
@@ -98,8 +131,9 @@ _C.MODEL.NAME = "multimodal_vae"
 _C.MODEL.LATENT_DIM = 256
 # Channel widths of a convolutional encoder, and of its decoder reversed.
 _C.MODEL.CHANNELS = [16, 32, 64]
-# Kernel width of every convolutional encoder layer. The decoders keep the kernel that
-# doubles the length exactly, which is a property of upsampling, not a receptive field.
+# Kernel width of the convolutions. CardioVAE uses it in its decoders too, as the
+# published model does; LS-EMVAE's lead encoders use it and its shared decoder keeps
+# its own. Every width reconstructs the input length exactly.
 _C.MODEL.KERNEL_SIZE = 3
 _C.MODEL.DROPOUT = 0.5
 # Width of the hidden layer in a prediction head. Empty gives a linear head.
@@ -162,6 +196,8 @@ _C.OBJECTIVE.POS_WEIGHT = 0.0
 
 # ---------------------------------------------------------------------------
 # Solver
+#
+# The epochs, rate and batch are pretraining's; fine-tuning takes its own from FINETUNE.
 # ---------------------------------------------------------------------------
 _C.SOLVER = CfgNode()
 _C.SOLVER.SEED = 2026
@@ -169,11 +205,25 @@ _C.SOLVER.BASE_LR = 1e-3
 _C.SOLVER.WEIGHT_DECAY = 0.0
 _C.SOLVER.MAX_EPOCHS = 50
 _C.SOLVER.BATCH_SIZE = 32
+# Clip the gradient norm to this value while pretraining, since a VAE's reconstruction
+# term can produce a large gradient in the first epochs, before the KL has annealed in.
+# 0 disables it.
+_C.SOLVER.GRAD_CLIP = 1.0
 # Epochs without improvement in the monitored metric before stopping. 0 disables it.
 _C.SOLVER.EARLY_STOP = 0
 _C.SOLVER.OPTIMIZER = "Adam"
 _C.SOLVER.ACCELERATOR = "auto"
 _C.SOLVER.DEVICES = "auto"
+
+# ---------------------------------------------------------------------------
+# Fine-tuning
+#
+# A shorter run than pretraining, on a far smaller labelled cohort.
+# ---------------------------------------------------------------------------
+_C.FINETUNE = CfgNode()
+_C.FINETUNE.MAX_EPOCHS = 50
+_C.FINETUNE.BASE_LR = 1e-3
+_C.FINETUNE.BATCH_SIZE = 32
 
 # ---------------------------------------------------------------------------
 # Output
@@ -182,6 +232,16 @@ _C.OUTPUT = CfgNode()
 _C.OUTPUT.OUT_DIR = "outputs"
 # Export per-modality attribution and ablation summaries after evaluation.
 _C.OUTPUT.INTERPRET = False
+# Attribution above this normalised value counts towards a modality's attribution ratio.
+_C.OUTPUT.ATTRIBUTION_THRESHOLD = 0.7
+# Integrated-gradient steps. Captum evaluates them all in one pass, so memory grows with
+# the steps times the batch, and at its default of 50 a full-length recording may not fit.
+_C.OUTPUT.ATTRIBUTION_STEPS = 16
+
+
+# A key renamed when the API took PyKale's names: an old YAML file naming it fails with
+# the new name in the message, rather than as a key that does not exist.
+_C.register_renamed_key("ECG.STANDARDISE", "ECG.NORMALIZE", message="the API follows PyKale's names; see CHANGELOG.md")
 
 
 def get_cfg_defaults() -> CfgNode:

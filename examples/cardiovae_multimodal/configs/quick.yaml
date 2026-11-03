@@ -8,8 +8,9 @@ DATASET:
   VAL_RATIO: 0.2
 
 ECG:
-  # Six synthetic leads of 512 samples, flattened end to end: 6 x 512 = 3072.
-  # The flattened length must match, or the crop keeps only the first lead or two.
+  # Six synthetic leads of 512 samples, interleaved into one channel: 6 x 512 = 3072.
+  # Each lead is cropped or padded to LENGTH / 6 samples before the leads are interleaved.
+  LEADS: ["I", "II", "III", "aVR", "aVL", "aVF"]
   LENGTH: 3072
   SAMPLING_RATE: 500
   NUM_CHANNELS: 1

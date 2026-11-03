@@ -109,6 +109,35 @@ class TestClassificationTask:
         with pytest.raises(ValueError, match="must have 3 entries"):
             ClassificationTask(num_classes=3, class_weight=[1.0, 1.0])
 
+    def test_a_positive_weight_raises_the_cost_of_a_missed_positive(self):
+        missed = PredictionOutput(prediction=torch.full((4, 1), -3.0), representation=torch.randn(4, 8))
+        batch = batch_with({LABEL_KEY: torch.ones(4)})
+        plain, _ = ClassificationTask().loss(missed, batch)
+        weighted, _ = ClassificationTask(pos_weight=3.0).loss(missed, batch)
+        assert float(weighted) == pytest.approx(3.0 * float(plain), rel=1e-5)
+
+    def test_the_binary_loss_is_pytorch_on_logits(self):
+        logits = torch.randn(4, 1)
+        targets = torch.tensor([0.0, 1.0, 1.0, 0.0])
+        loss, _ = ClassificationTask().loss(
+            PredictionOutput(prediction=logits, representation=logits), batch_with({LABEL_KEY: targets})
+        )
+        assert torch.allclose(loss, torch.nn.functional.binary_cross_entropy_with_logits(logits.reshape(-1), targets))
+
+    def test_multiclass_labels_read_from_a_numeric_column_are_accepted(self):
+        # A label column read with pandas arrives as floats; they are class indices.
+        task = ClassificationTask(num_classes=3)
+        output = PredictionOutput(prediction=torch.randn(4, 3), representation=torch.randn(4, 8))
+        loss, _ = task.loss(output, batch_with({LABEL_KEY: torch.tensor([0.0, 2.0, 1.0, 2.0])}))
+        assert torch.isfinite(loss)
+
+    def test_a_class_weight_changes_the_multiclass_loss(self):
+        output = PredictionOutput(prediction=torch.randn(4, 3), representation=torch.randn(4, 8))
+        batch = batch_with({LABEL_KEY: torch.tensor([0.0, 2.0, 1.0, 2.0])})
+        plain, _ = ClassificationTask(num_classes=3).loss(output, batch)
+        weighted, _ = ClassificationTask(num_classes=3, class_weight=[1.0, 1.0, 5.0]).loss(output, batch)
+        assert not torch.allclose(plain, weighted)
+
 
 class TestRegressionTask:
     def test_the_loss_is_a_mean_squared_error(self):
@@ -126,6 +155,17 @@ class TestRegressionTask:
 
     def test_it_supervises_a_continuous_key(self):
         assert RegressionTask().target_keys == (VALUE_KEY,)
+
+    def test_the_metric_is_scikit_learns_r_squared(self):
+        from sklearn.metrics import r2_score
+
+        targets, scores = torch.tensor([1.0, 2.0, 3.0, 5.0]), torch.tensor([1.5, 1.5, 3.5, 4.0])
+        assert RegressionTask().metric(scores, {VALUE_KEY: targets}) == pytest.approx(r2_score(targets, scores))
+
+    def test_a_split_whose_targets_do_not_vary_has_no_r_squared(self):
+        # scikit-learn would report 0 or 1 here; the trainer must skip, not log it.
+        with pytest.raises(MetricError, match="same value"):
+            RegressionTask().metric(torch.tensor([1.0, 2.0]), {VALUE_KEY: torch.tensor([3.0, 3.0])})
 
 
 class TestReconstructionTask:

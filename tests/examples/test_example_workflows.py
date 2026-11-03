@@ -303,12 +303,15 @@ class TestLSEMVAEExample:
     @pytest.mark.slow
     def test_interpretation_writes_a_lead_importance_table(self, tmp_path):
         pytest.importorskip("captum")
+        import csv
+
         cfg = lsemvae_cfg(tmp_path, **{"OUTPUT.INTERPRET": True})
         lsemvae_runner.run(cfg)
         out = tmp_path / "lsemvae"
         assert (out / "latent_space.csv").exists()
         assert (out / "lead_agreement.json").exists()
-        assert (out / "I+II" / "lead_importance.csv").exists()
+        with (out / "I+II" / "attribution.csv").open(encoding="utf-8") as handle:
+            assert sorted(row["modality"] for row in csv.DictReader(handle)) == ["I", "II"]
 
 
 def _assert_three_class_run(summary, out, arm):
@@ -346,6 +349,17 @@ class TestExamplesUseTheLibrary:
         ):
             source = path.read_text(encoding="utf-8")
             assert "nn.Module" not in source, f"{path} defines a network; models belong in kalecardiac/"
+
+    def test_both_runners_run_the_shared_workflow_rather_than_copies_of_it(self):
+        # Pretraining, fine-tuning, scoring and interpretation are kalecardiac.auto's. A
+        # runner defining one of them again is the duplication this guards against.
+        from pathlib import Path
+
+        for path in (Path("examples/cardiovae_multimodal/runner.py"), Path("examples/lsemvae_ecg/runner.py")):
+            source = path.read_text(encoding="utf-8")
+            assert "pretrain(" in source and "cross_validate(" in source, path
+            for name in ("pretrain", "fine_tune", "cross_validate", "interpret_model", "build_task", "score", "splits"):
+                assert f"def {name}(" not in source, f"{path} defines {name}; use kalecardiac.auto.{name}"
 
     def test_both_runners_import_their_model_from_the_library(self):
         from pathlib import Path

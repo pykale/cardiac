@@ -5,6 +5,7 @@
 graft tests
 graft examples
 graft docs
+graft tutorials
 include AGENTS.md API_overview.md
 
 prune outputs

@@ -28,7 +28,7 @@ is adding a dictionary entry; adding a *kind* of modality is implementing
 :class:`ModalitySource`.
 
 That is what makes "every lead is a modality" a configuration rather than a model
-rewrite: :func:`kalecardiac.loaddata.lead_sources` turns one ECG source into twelve
+rewrite: :func:`kalecardiac.loaddata.get_lead_sources` turns one ECG source into twelve
 named ones, and everything downstream sees an ordinary multimodal cohort.
 
 **Missing data is expected, not exceptional.** A source returns ``None`` for a subject
@@ -346,6 +346,61 @@ class MultimodalDataset(Dataset[SubjectSample]):
         self.sources = dict(sources)
         self.target = target
         self.metadata_from = tuple(sources if metadata_from is None else metadata_from)
+
+    @classmethod
+    def from_arrays(
+        cls,
+        arrays: Mapping[str, np.ndarray | Tensor | Sequence[ArrayLike]],
+        targets: Mapping[str, np.ndarray | Tensor | Sequence[float]] | None = None,
+        identifiers: Sequence[str] | None = None,
+    ) -> MultimodalDataset:
+        """A cohort from aligned arrays, one subject per row.
+
+        The shortest way in when the data is already tensors -- features prepared once
+        and saved with ``torch.save``, as PyKale's ``SignalImageDataset`` takes them --
+        with every modality present for every subject::
+
+            >>> dataset = MultimodalDataset.from_arrays(
+            ...     {"signal": np.zeros((4, 1, 100)), "image": np.zeros((4, 1, 8, 8))},
+            ...     targets={"label": [0, 1, 0, 1]},
+            ... )
+            >>> len(dataset), tuple(dataset[0].modalities["image"].shape), float(dataset[1].target["label"])
+            (4, (1, 8, 8), 1.0)
+
+        Args:
+            arrays: One array per modality, keyed by the name the model's encoders use,
+                with subjects along the first axis.
+            targets: One ``(N,)`` array per batch target key, e.g. ``{"label": labels}``.
+                ``None`` for an unlabelled cohort.
+            identifiers: A name per subject. ``None`` numbers them from 0.
+
+        Returns:
+            The cohort.
+
+        Raises:
+            ValueError: If ``arrays`` is empty, or the arrays, targets and identifiers
+                disagree on the number of subjects.
+        """
+        if not arrays:
+            raise ValueError("from_arrays needs at least one modality")
+        sizes = {name: len(values) for name, values in {**arrays, **(targets or {})}.items()}
+        if len(set(sizes.values())) != 1:
+            raise ValueError(f"every array must hold the same number of subjects, got {sizes}")
+        count = next(iter(sizes.values()))
+        names = [str(index) for index in range(count)] if identifiers is None else [str(name) for name in identifiers]
+        if len(names) != count:
+            raise ValueError(f"got {len(names)} identifiers for {count} subjects")
+
+        sources = {name: ArraySource(dict(zip(names, values, strict=True))) for name, values in arrays.items()}
+        target = None
+        if targets:
+            target = ColumnTarget.from_mapping(
+                {
+                    key: dict(zip(names, np.asarray(values).reshape(-1).tolist(), strict=True))
+                    for key, values in targets.items()
+                }
+            )
+        return cls(names, sources, target=target)
 
     def __len__(self) -> int:
         return len(self.identifiers)

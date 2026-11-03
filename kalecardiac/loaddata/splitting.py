@@ -5,7 +5,7 @@ Splitters follow scikit-learn's shape: an object configured once, then asked to
 makes a split a value a caller can pass around, log, or swap for another without the
 code that consumes it changing::
 
-    splitter = CrossValidation(n_splits=5, group_by="subject_id", stratify_by=["label"])
+    splitter = CrossValidationSplit(n_splits=5, group_by="subject_id", stratify_by=["label"])
     for split in splitter.split(cohort):
         train, val, test = (cohort.iloc[split[name]] for name in SPLIT_NAMES)
 
@@ -22,7 +22,7 @@ that is not a formality: a subject often contributes several recordings -- a res
 and a stress ECG, a radiograph from each of two visits -- and splitting on recordings
 puts the same heart on both sides of the evaluation.
 
-Nothing here knows a dataset. :class:`Predefined` applies an assignment somebody else
+Nothing here knows a dataset. :class:`PredefinedSplit` applies an assignment somebody else
 produced; where that assignment comes from -- a published split, an internal against
 an external cohort, one recruiting site held out -- belongs to the dataset that defines
 it.
@@ -50,7 +50,7 @@ class SplitError(ValueError):
     """Raised when a requested split cannot be produced."""
 
 
-def composite_labels(frame: pd.DataFrame, stratify_by: Sequence[str] = (), min_count: int = 2) -> np.ndarray:
+def get_stratification_labels(frame: pd.DataFrame, stratify_by: Sequence[str] = (), min_count: int = 2) -> np.ndarray:
     """Combine stratification columns into a single categorical target.
 
     One label per row from any number of columns, so a splitter needs no special case
@@ -83,7 +83,7 @@ def composite_labels(frame: pd.DataFrame, stratify_by: Sequence[str] = (), min_c
     return np.where(np.isin(labels, counts[counts >= min_count].index), labels, counts.idxmax())
 
 
-class CohortSplitter(ABC):
+class BaseSplitter(ABC):
     """Base class for splitters over a table of samples.
 
     Args:
@@ -164,7 +164,7 @@ class CohortSplitter(ABC):
 
         # Both sides keep at least one unit, whatever the share asks for.
         held_count = min(max(round(size * count), 1), count - 1)
-        labels = composite_labels(units, self.stratify_by, min_count=2)
+        labels = get_stratification_labels(units, self.stratify_by, min_count=2)
         # Stratification needs room for every class on both sides. Where there is not
         # enough it is dropped rather than allowed to fail: the split degrades to a
         # plain shuffle instead of raising on a small cohort.
@@ -190,7 +190,7 @@ class CohortSplitter(ABC):
         return {"train": train, "val": val, "test": test}
 
 
-class HoldOut(CohortSplitter):
+class HoldOutSplit(BaseSplitter):
     """One stratified, grouped train/validation/test split.
 
     The counterpart of scikit-learn's ``train_test_split``, extended with a third set
@@ -232,7 +232,7 @@ class HoldOut(CohortSplitter):
         yield self._with_validation(frame, fit, test, self.random_state)
 
 
-class CrossValidation(CohortSplitter):
+class CrossValidationSplit(BaseSplitter):
     """Each of ``n_splits`` folds held out for testing in turn.
 
     The counterpart of scikit-learn's ``StratifiedGroupKFold``, which it uses, with a
@@ -269,17 +269,26 @@ class CrossValidation(CohortSplitter):
     def split(self, frame: pd.DataFrame) -> Iterator[Split]:
         self._require_columns(frame, minimum=self.n_splits)
 
-        labels = composite_labels(frame, self.stratify_by, min_count=self.n_splits)
-        groups = frame[self.group_by].to_numpy() if self.group_by else None
-        folds = (StratifiedGroupKFold if self.group_by else StratifiedKFold)(
-            n_splits=self.n_splits, shuffle=True, random_state=self.random_state
-        )
+        labels = get_stratification_labels(frame, self.stratify_by, min_count=self.n_splits)
+        if self.group_by:
+            # Not StratifiedGroupKFold(shuffle=True): it shuffles each group's class
+            # counts without shuffling which group they belong to, so the folds it
+            # balances are not the folds it returns, and with singleton groups a fold can
+            # hold a twelfth of the positives. Numbering the groups in a seeded random
+            # order instead randomises the folds; its stable sort keeps that order.
+            _, codes = np.unique(frame[self.group_by].to_numpy(), return_inverse=True)
+            groups = np.random.default_rng(self.random_state).permutation(codes.max() + 1)[codes]
+            folds = StratifiedGroupKFold(n_splits=self.n_splits).split(frame, labels, groups)
+        else:
+            folds = StratifiedKFold(n_splits=self.n_splits, shuffle=True, random_state=self.random_state).split(
+                frame, labels
+            )
 
-        for fold, (fit, test) in enumerate(folds.split(frame, labels, groups)):
+        for fold, (fit, test) in enumerate(folds):
             yield self._with_validation(frame, fit, test, self.random_state + fold)
 
 
-class Predefined(CohortSplitter):
+class PredefinedSplit(BaseSplitter):
     """An assignment somebody else decided, applied to a table.
 
     The counterpart of scikit-learn's ``PredefinedSplit``. Use it wherever the
@@ -341,65 +350,3 @@ class Predefined(CohortSplitter):
                 )
 
         yield self._with_validation(frame, positions[self.train_key], positions[self.test_key], self.random_state)
-
-
-def train_test_split(
-    frame: pd.DataFrame,
-    test_size: float = 0.2,
-    group_by: str | None = None,
-    stratify_by: Sequence[str] = (),
-    random_state: int = 2026,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Indices for one grouped, stratified two-way split.
-
-    The function form, for when a caller wants a single division and not a splitter to
-    iterate -- carving validation out of a training half, most often. Named as
-    scikit-learn's is because it does the same job, over a table with named columns
-    rather than parallel arrays.
-
-    Args:
-        frame: Table describing the samples.
-        test_size: Share held out.
-        group_by: Column whose rows must not be divided.
-        stratify_by: Columns whose distribution both sides should preserve.
-        random_state: Seed, making the split reproducible.
-
-    Returns:
-        ``(kept, held_out)`` positional indices into ``frame``.
-
-    Raises:
-        SplitError: If the table is too small to divide.
-    """
-    if not 0 < test_size < 1:
-        raise SplitError(f"test_size must lie in (0, 1), got {test_size}")
-    splitter = HoldOut(
-        test_size=test_size, val_size=0.0, group_by=group_by, stratify_by=stratify_by, random_state=random_state
-    )
-    split = next(splitter.split(frame))
-    return split["train"], split["test"]
-
-
-def subject_frame(identifiers: Sequence[str], id_column: str = "subject_id", **columns: Sequence) -> pd.DataFrame:
-    """Build the table a splitter splits, from identifiers and any stratification keys.
-
-    A convenience for a cohort that never had a table -- labels read from a directory
-    layout, or produced by a synthetic generator -- so that splitting is done over the
-    same named-column interface whatever the cohort was built from.
-
-    Args:
-        identifiers: Subject identifiers, in order.
-        id_column: Name the identifier column is given.
-        **columns: Any further columns, e.g. ``label=[...]``, each aligned with
-            ``identifiers``.
-
-    Returns:
-        One row per identifier.
-
-    Raises:
-        SplitError: If a column's length does not match ``identifiers``.
-    """
-    identifiers = [str(identifier) for identifier in identifiers]
-    for name, values in columns.items():
-        if len(values) != len(identifiers):
-            raise SplitError(f"column {name!r} has {len(values)} values for {len(identifiers)} subjects")
-    return pd.DataFrame({id_column: identifiers, **{name: list(values) for name, values in columns.items()}})

@@ -32,6 +32,7 @@ which verifies that a workflow executes and is never a result.
    :caption: API reference
 
    kalecardiac
+   kalecardiac.auto
    kalecardiac.loaddata
    kalecardiac.prepdata
    kalecardiac.model

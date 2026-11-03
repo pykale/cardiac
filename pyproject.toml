@@ -25,7 +25,9 @@ classifiers = [
 ]
 dependencies = [
     "torch",
+    "torchvision",
     "numpy",
+    "scipy",
     "pandas",
     "scikit-learn",
     "pyyaml",
@@ -42,9 +44,12 @@ ecg = [
     "neurokit2",
 ]
 # Reading medical images from disk in the formats cardiac cohorts publish them in.
+# DICOM is read through PyKale's reader, which imports scikit-image as well as pydicom;
+# pydicom 3 is the first with pydicom.pixels, which applies a DICOM image's display settings.
 imaging = [
     "pillow",
-    "pydicom",
+    "pydicom>=3.0",
+    "scikit-image",
 ]
 # Attribution and latent-space projection.
 interpret = [
@@ -112,8 +117,9 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-# Examples report to the console: that is their output, not a stray debug print.
+# Examples and tutorials report to the console: that is their output, not a stray debug print.
 "examples/**" = ["T20"]
+"tutorials/**" = ["T20"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["kalecardiac", "examples", "tests"]

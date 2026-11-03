@@ -17,7 +17,7 @@ ECG:
   FINETUNE_LEADS: ["I", "II", "III", "aVR", "aVL", "aVF"]
   LENGTH: 5000
   SAMPLING_RATE: 500
-  STANDARDISE: true
+  NORMALIZE: true
   ENCODER: "conv"
   DERIVE_MISSING: false
 
