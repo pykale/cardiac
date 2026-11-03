@@ -82,8 +82,9 @@ directory prepared from those, or pretrain separately and load the checkpoint wi
 
 | Setting | Effect |
 | --- | --- |
-| `ECG.NUM_CHANNELS` | `1` flattens every lead into one long signal, as the reference implementation does; `12` encodes the leads as channels |
-| `ECG.LENGTH` | Samples the recording is cropped or padded to. With flattening this is *leads × samples per lead* |
+| `ECG.LEADS` | The leads each recording file stores, in storage order. MIMIC-IV-ECG's order by default -- I, II, III, aVR, **aVF, aVL**, V1–V6 -- which is not the clinical order; set it to your export's |
+| `ECG.NUM_CHANNELS` | `1` interleaves the leads sample by sample into one long signal, as the reference implementation does and the published checkpoint expects; `12` encodes the leads as channels |
+| `ECG.LENGTH` | Samples the recording is cropped or padded to. With flattening this is *leads × samples per lead*, and each lead is cropped to its share before the leads are interleaved |
 | `OBJECTIVE.RECONSTRUCTION_WEIGHTS` | Per-modality weights. The ECG is weighted ten times the radiograph because a sum of squares over 60,000 samples and one over 50,176 pixels are not comparable quantities |
 | `OBJECTIVE.SCALE_FACTOR` | Brings the summed reconstruction into range of the KL term |
 | `OBJECTIVE.ANNEALING_EPOCHS` | Epochs over which the KL weight rises from 0 to 1, so the model learns to reconstruct before it is asked to regularise |
@@ -95,7 +96,7 @@ directory prepared from those, or pretrain separately and load the checkpoint wi
 | `ENDPOINT.LABEL_COLUMN` | Read the class from this column instead of thresholding the measurement. Required for more than two classes, since a threshold makes two |
 | `DATASET.MODALITIES` | Which modalities are compared when `--arms` is not given: each alone, then all fused |
 | `ECG.SOURCE_SAMPLING_RATE` | The rate your recordings arrive at, if not `ECG.SAMPLING_RATE`. Resampled **per lead, before flattening**, so no sample is interpolated across the join between two leads |
-| `MODEL.KERNEL_SIZE` | Kernel width of both convolutional encoders |
+| `MODEL.KERNEL_SIZE` | Kernel width of every convolution, encoders and decoders. 3 is the published model |
 | `FUSION.LATENT_METHOD` | `poe` is the published model; `moe`, `mean`, `barycenter` and `hime` are ablations of it |
 | `MODEL.PRETRAINED` | A checkpoint to start from. Pretraining is skipped and these weights are loaded, strictly — one saved from another architecture fails rather than half-loading |
 
@@ -104,18 +105,21 @@ directory prepared from those, or pretrain separately and load the checkpoint wi
 ```text
 <OUTPUT.OUT_DIR>/
 ├── config.yaml             the exact configuration this run used
+├── cohort.json             what was assembled, and whether it was synthetic
 ├── pretrained.pt           the representation-learning weights
 ├── results.csv             one row per modality arm
 ├── summary.json            fold means and spreads
 └── <arm>/
     ├── predictions.csv     one row per subject per fold, traceable by subject_id
     ├── metrics.json        per-fold metrics and their summary
-    └── interpretation.json attribution shares and modality ablation
+    ├── attribution.csv     attribution ratio and share per modality
+    └── interpretation.json the same, with the modality ablation
 ```
 
 The ablation in `interpretation.json` withholds each modality in turn and rescores the
 last fold's test split, in the endpoint's threshold-free metric: ROC-AUC, the macro
-one-versus-rest ROC-AUC for a graded endpoint, or R² for a measurement.
+one-versus-rest ROC-AUC for a graded endpoint, or R² for a measurement. A one-modality
+arm has none, since withholding its only modality leaves the model nothing to read.
 
 ## Reading the numbers
 

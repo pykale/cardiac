@@ -15,27 +15,30 @@ A publication figure names a cohort, a colour scheme and a claim, so it is built
 ``examples/`` from these numbers.
 """
 
+from typing import TYPE_CHECKING
+
 from kalecardiac.interpret.attribution import (
     attribution_ratio,
     attribution_ratios,
-    ecg_wave_segments,
+    delineate_ecg_waves,
     modality_ablation,
     modality_attributions,
-    normalise_attribution,
+    normalize_attribution,
     progressive_ablation,
     segment_attribution_ratios,
 )
-from kalecardiac.interpret.latent import collect_latents, latent_embedding
+from kalecardiac.interpret.latent import collect_latents, project_latents
+from kalecardiac.utils.renames import renamed
 
 __all__ = [
     "attribution_ratio",
     "attribution_ratios",
     "collect_latents",
-    "ecg_wave_segments",
-    "latent_embedding",
+    "delineate_ecg_waves",
+    "project_latents",
     "modality_ablation",
     "modality_attributions",
-    "normalise_attribution",
+    "normalize_attribution",
     "progressive_ablation",
     "segment_attribution_ratios",
 ]
@@ -43,3 +46,10 @@ __all__ = [
 
 def __dir__():
     return sorted(__all__)
+
+
+if not TYPE_CHECKING:
+    # At runtime only: a module-level __getattr__ that a type checker saw would make
+    # every misspelt import type-check.
+    def __getattr__(name: str):
+        raise renamed(__name__, name)

@@ -33,7 +33,7 @@ KaleCardiac enforces the same *standardization* and *minimalism* as PyKale, via 
 - `model.predict` turns a representation into a score: `LinearHead` and `MLPHead`, with every objective that trains them — including the multimodal ELBO
 - `evaluate` evaluates the performance using some metrics, chosen for a clinical reading: ROC-AUC alongside sensitivity and specificity, and regression metrics in the endpoint's own units
 - `interpret` interprets the features and outputs via post-prediction analysis: gradient attribution, lead importance, modality ablation, latent inspection
-- `auto` selects and constructs a workflow from a configuration alone (`AutoCardiac*` classes, planned)
+- `auto` runs a workflow from a configuration alone: the endpoint a cohort's table defines, pretraining, and fine-tuning, scoring and interpreting over the folds
 - `pipeline` specifies a machine learning workflow by combining several other modules: one *trainer* takes a *model* and a *task*, and **pretraining is a task**, not a second trainer
 
 #### Supported modalities
@@ -87,6 +87,8 @@ Heavy libraries are kept out of the core install and grouped into extras, so tha
 The signal and image transforms are pure NumPy and Torch, so the core install is enough to preprocess arrays, train every model and score it. For more details, see [the quickstart guide](https://github.com/pykale/cardiac/blob/main/docs/quickstart.md).
 
 ### Step 1: Tutorials and Examples
+
+**Start with the notebook.** [`tutorials/cardiac_abnormality_assessment.ipynb`](https://github.com/pykale/cardiac/blob/main/tutorials/cardiac_abnormality_assessment.ipynb) ([open in Colab](https://colab.research.google.com/github/pykale/cardiac/blob/main/tutorials/cardiac_abnormality_assessment.ipynb)) is PyKale's [cardiothoracic abnormality tutorial](https://pykale.github.io/mmai-tutorials/tutorials/cardiac-abnormality-assessment/tutorial-heart.html) rebuilt on KaleCardiac: load paired chest X-rays and ECGs, pretrain CardioVAE, fine-tune the published checkpoint, evaluate and interpret, each in a few lines. Without the workshop data it runs on synthetic stand-ins.
 
 Start with the [quickstart](https://github.com/pykale/cardiac/blob/main/docs/quickstart.md), which walks through a complete workflow — load, pretrain without labels, fine-tune, score, interpret — in about forty lines. **No data or credentials are needed:** both examples generate their cohorts when no data path is given, so the whole thing runs offline in about a minute on a CPU.
 

@@ -147,7 +147,7 @@ def make_synthetic_image_data(
     enough dependence for a model to find, and nothing that resembles anatomy.
 
     Values are in the unit interval, matching what
-    :func:`~kalecardiac.prepdata.build_image_pipeline` produces and what a
+    :func:`~kalecardiac.prepdata.get_image_transform` produces and what a
     sigmoid image decoder can reconstruct.
 
     Args:

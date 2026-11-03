@@ -16,7 +16,7 @@ evidence that respects how much each lead actually saw.
 Three pieces carry that:
 
 **Lead-specific encoders.** One variational encoder per lead. The generic mechanism is
-in :mod:`kalecardiac.loaddata.ecg_access` -- :func:`~kalecardiac.loaddata.lead_sources`
+in :mod:`kalecardiac.loaddata.signal_access` -- :func:`~kalecardiac.loaddata.get_lead_sources`
 splits a recording into named per-lead modalities -- and after it, nothing in the model
 knows that the modalities happen to be leads.
 
@@ -42,7 +42,7 @@ Two documented departures from the reference implementation
 ``group_size = num_experts // num_groups`` and then took ``num_groups`` slices of that
 width. With twelve leads plus the prior and four groups, that is four groups of three,
 covering experts 0 to 11 -- the thirteenth expert, the prior, was silently dropped.
-:func:`~kalecardiac.model.layers.expert_groups` distributes the remainder instead, so
+:func:`~kalecardiac.model.layers.get_expert_groups` distributes the remainder instead, so
 every expert is used. Pass ``use_prior=False`` to fuse the leads alone.
 
 **The KL term is taken against the posterior that was actually sampled from.** Its
@@ -59,7 +59,7 @@ from collections.abc import Sequence
 
 from torch import nn
 
-from kalecardiac.loaddata.ecg_access import canonical_leads
+from kalecardiac.loaddata.signal_access import normalize_lead_names
 from kalecardiac.model.embed.encoders import VariationalEncoder, build_signal_encoder
 from kalecardiac.model.embed.multimodal_vae import MultimodalVAE
 from kalecardiac.model.layers.conv1d import Conv1dDecoder
@@ -106,7 +106,7 @@ class LSEMVAE(MultimodalVAE):
         shared_decoder: bool = True,
         use_prior: bool = True,
     ) -> None:
-        names = canonical_leads(leads)
+        names = normalize_lead_names(leads)
         decoder_channels = tuple(reversed(tuple(channels)))
 
         encoders: dict[str, nn.Module] = {}

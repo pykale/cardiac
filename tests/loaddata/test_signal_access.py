@@ -14,23 +14,23 @@ from kalecardiac.loaddata import (
     ECGFileSource,
     ECGFormatError,
     LeadSource,
-    as_lead_array,
-    canonical_lead,
-    canonical_leads,
-    lead_indices,
-    lead_sources,
+    check_ecg_array,
+    get_lead_indices,
+    get_lead_sources,
+    normalize_lead_name,
+    normalize_lead_names,
 )
 
 
 class TestLeadNaming:
     @pytest.mark.parametrize("spelling", ["aVR", "AVR", "avr", "LEAD_aVR", "lead_AVR", " aVR "])
     def test_spellings_canonicalise_to_one_name(self, spelling):
-        assert canonical_lead(spelling) == "aVR"
+        assert normalize_lead_name(spelling) == "aVR"
 
     def test_unknown_name_keeps_its_own_spelling(self):
         # A cohort may record a lead this package has never heard of; only the export
         # prefix is stripped.
-        assert canonical_lead("LEAD_X7") == "X7"
+        assert normalize_lead_name("LEAD_X7") == "X7"
 
     def test_standard_order_is_limb_then_precordial(self):
         assert STANDARD_12_LEAD == LIMB_LEADS + PRECORDIAL_LEADS
@@ -38,44 +38,44 @@ class TestLeadNaming:
 
     def test_empty_lead_set_is_rejected(self):
         with pytest.raises(ECGFormatError, match="must declare its leads"):
-            canonical_leads([])
+            normalize_lead_names([])
 
     def test_two_spellings_of_one_lead_are_rejected(self):
         # Choosing which copy is real is the cohort's decision, not this function's.
         with pytest.raises(ECGFormatError, match="more than once"):
-            canonical_leads(["I", "LEAD_I"])
+            normalize_lead_names(["I", "LEAD_I"])
 
     def test_indices_follow_the_requested_order_not_storage_order(self):
-        assert lead_indices(STANDARD_12_LEAD, ["II", "I", "V6"]) == [1, 0, 11]
+        assert get_lead_indices(STANDARD_12_LEAD, ["II", "I", "V6"]) == [1, 0, 11]
 
     def test_missing_lead_is_named_in_the_error(self):
         with pytest.raises(ECGFormatError, match=r"\['V1'\]"):
-            lead_indices(LIMB_LEADS, ["I", "V1"])
+            get_lead_indices(LIMB_LEADS, ["I", "V1"])
 
 
 class TestLeadArrayCoercion:
     def test_transposes_a_samples_by_leads_recording(self):
-        array = as_lead_array(np.zeros((500, 12)), num_leads=12)
+        array = check_ecg_array(np.zeros((500, 12)), num_leads=12)
         assert array.shape == (12, 500)
 
     def test_leaves_a_leads_by_samples_recording_alone(self):
-        assert as_lead_array(np.zeros((12, 500)), num_leads=12).shape == (12, 500)
+        assert check_ecg_array(np.zeros((12, 500)), num_leads=12).shape == (12, 500)
 
     def test_accepts_one_dimensional_input_for_a_single_lead(self):
-        assert as_lead_array(np.zeros(500), num_leads=1).shape == (1, 500)
+        assert check_ecg_array(np.zeros(500), num_leads=1).shape == (1, 500)
 
     def test_rejects_one_dimensional_input_for_several_leads(self):
         with pytest.raises(ECGFormatError, match="1-D recording holds one lead"):
-            as_lead_array(np.zeros(500), num_leads=12)
+            check_ecg_array(np.zeros(500), num_leads=12)
 
     def test_square_recording_is_not_guessed_at(self):
         # 12x12 has an axis of length 12 either way; taking the first is the documented
         # behaviour, and it must not silently transpose.
-        assert as_lead_array(np.arange(144).reshape(12, 12), num_leads=12)[0, 1] == 1
+        assert check_ecg_array(np.arange(144).reshape(12, 12), num_leads=12)[0, 1] == 1
 
     def test_shape_with_no_matching_axis_is_rejected(self):
         with pytest.raises(ECGFormatError, match="no axis of length 12"):
-            as_lead_array(np.zeros((6, 500)), num_leads=12)
+            check_ecg_array(np.zeros((6, 500)), num_leads=12)
 
 
 class TestECGArraySource:
@@ -200,7 +200,7 @@ class TestECGFileSource:
         source.loader = lambda path: (reads.append(path), original(path))[1]
 
         identifier = cohort.subject_id[0]
-        for lead in lead_sources(source).values():
+        for lead in get_lead_sources(source).values():
             lead.get(identifier, 0)
         assert len(reads) == 1
 
@@ -213,7 +213,7 @@ class TestECGFileSource:
 
 class TestLeadSources:
     def test_each_lead_becomes_a_single_channel_modality(self, cohort, ecg_source):
-        sources = lead_sources(ecg_source)
+        sources = get_lead_sources(ecg_source)
         assert sorted(sources) == sorted(cohort.leads)
         for lead, source in sources.items():
             value = source.get(cohort.subject_id[0], 0)
@@ -226,11 +226,11 @@ class TestLeadSources:
             assert torch.equal(taken[0], full[index])
 
     def test_a_subset_can_be_requested_in_its_own_order(self, cohort, ecg_source):
-        sources = lead_sources(ecg_source, leads=["aVF", "I"])
+        sources = get_lead_sources(ecg_source, leads=["aVF", "I"])
         assert list(sources) == ["aVF", "I"]
 
     def test_prefix_names_a_second_recording(self, cohort, ecg_source):
-        sources = lead_sources(ecg_source, leads=["I"], prefix="rest_")
+        sources = get_lead_sources(ecg_source, leads=["I"], prefix="rest_")
         assert list(sources) == ["rest_I"]
 
     def test_absent_subject_stays_absent_per_lead(self, ecg_source):
@@ -255,7 +255,7 @@ class TestLeadSources:
 class TestEdgesAndDescriptions:
     def test_a_three_dimensional_recording_is_refused(self):
         with pytest.raises(ECGFormatError, match="expected a 2-D"):
-            as_lead_array(np.zeros((2, 3, 4)), 2)
+            check_ecg_array(np.zeros((2, 3, 4)), 2)
 
     def test_an_empty_source_takes_its_shape_from_the_declaration(self):
         source = ECGArraySource({}, leads=["I", "II"], length=50)

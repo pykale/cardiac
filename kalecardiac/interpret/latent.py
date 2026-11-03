@@ -88,7 +88,7 @@ def collect_latents(
     )
 
 
-def latent_embedding(
+def project_latents(
     features: np.ndarray,
     method: str = "pca",
     n_components: int = 2,
@@ -137,8 +137,7 @@ def latent_embedding(
             import umap
         except ImportError as error:  # pragma: no cover - exercised only without the extra
             raise ImportError(
-                'latent_embedding(method="umap") needs umap-learn. Install it with: '
-                'pip install "kalecardiac[interpret]"'
+                'project_latents(method="umap") needs umap-learn. Install it with: pip install "kalecardiac[interpret]"'
             ) from error
         # Bounded by the cohort: UMAP's default of 15 neighbours fails outright on a
         # split smaller than that, which a small cardiac cohort routinely is.

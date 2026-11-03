@@ -16,7 +16,7 @@ and :class:`LeadSource` turns either of them into *one lead*, which is the mecha
 behind treating each lead as its own modality::
 
     >>> ecg = ECGArraySource({"s1": np.zeros((3, 500))}, leads=["I", "II", "V1"])
-    >>> sources = lead_sources(ecg)
+    >>> sources = get_lead_sources(ecg)
     >>> sorted(sources)
     ['I', 'II', 'V1']
     >>> sources["V1"].get("s1", 0).shape
@@ -61,7 +61,7 @@ class ECGFormatError(ValueError):
     """Raised when a recording does not have the shape or leads it was declared with."""
 
 
-def canonical_lead(name: str) -> str:
+def normalize_lead_name(name: str) -> str:
     """Return the canonical spelling of a lead name.
 
     Strips a ``LEAD_`` prefix and matches case-insensitively against
@@ -84,7 +84,7 @@ def canonical_lead(name: str) -> str:
     return stripped
 
 
-def canonical_leads(names: Sequence[str]) -> tuple[str, ...]:
+def normalize_lead_names(names: Sequence[str]) -> tuple[str, ...]:
     """Canonicalise a sequence of lead names, rejecting duplicates.
 
     Args:
@@ -100,14 +100,14 @@ def canonical_leads(names: Sequence[str]) -> tuple[str, ...]:
     """
     if not names:
         raise ECGFormatError("an ECG source must declare its leads; there is no default lead set")
-    canonical = tuple(canonical_lead(name) for name in names)
+    canonical = tuple(normalize_lead_name(name) for name in names)
     duplicates = sorted({lead for lead in canonical if canonical.count(lead) > 1})
     if duplicates:
         raise ECGFormatError(f"lead names {duplicates} appear more than once after canonicalisation: {list(names)}")
     return canonical
 
 
-def lead_indices(available: Sequence[str], wanted: Sequence[str]) -> list[int]:
+def get_lead_indices(available: Sequence[str], wanted: Sequence[str]) -> list[int]:
     """Positions of ``wanted`` within ``available``, matched canonically.
 
     The one place lead selection and lead *ordering* are decided, so that asking for
@@ -123,15 +123,15 @@ def lead_indices(available: Sequence[str], wanted: Sequence[str]) -> list[int]:
     Raises:
         ECGFormatError: If a wanted lead is not available.
     """
-    positions = {lead: index for index, lead in enumerate(canonical_leads(available))}
-    chosen = canonical_leads(wanted)
+    positions = {lead: index for index, lead in enumerate(normalize_lead_names(available))}
+    chosen = normalize_lead_names(wanted)
     missing = [lead for lead in chosen if lead not in positions]
     if missing:
         raise ECGFormatError(f"leads {missing} are not in this recording, which holds {sorted(positions)}")
     return [positions[lead] for lead in chosen]
 
 
-def as_lead_array(value: ArrayLike, num_leads: int) -> np.ndarray:
+def check_ecg_array(value: ArrayLike, num_leads: int) -> np.ndarray:
     """Coerce a recording to ``(num_leads, num_samples)`` float32.
 
     A one-dimensional input is accepted for a single-lead recording, and a
@@ -218,9 +218,9 @@ class ECGArraySource(ModalitySource):
         length: int | None = None,
         channels: int | None = None,
     ) -> None:
-        self.source_leads = canonical_leads(leads)
-        self.leads = self.source_leads if select is None else canonical_leads(select)
-        self._indices = lead_indices(self.source_leads, self.leads)
+        self.source_leads = normalize_lead_names(leads)
+        self.leads = self.source_leads if select is None else normalize_lead_names(select)
+        self._indices = get_lead_indices(self.source_leads, self.leads)
         self.sampling_rate = float(sampling_rate)
         self.transform = transform
         # Held by reference rather than copied: a file-backed source passes a
@@ -255,7 +255,7 @@ class ECGArraySource(ModalitySource):
         return self.channels == self.num_leads
 
     def _read(self, identifier: str) -> Tensor:
-        array = as_lead_array(self.recordings[identifier], len(self.source_leads))
+        array = check_ecg_array(self.recordings[identifier], len(self.source_leads))
         array = array[self._indices]
         if self.transform is not None:
             array = np.asarray(self.transform(array), dtype=np.float32)
@@ -274,7 +274,7 @@ class ECGArraySource(ModalitySource):
             raise ECGFormatError(
                 f"subject {identifier!r} yields a {tuple(recording.shape)} recording but the source declares "
                 f"({self.channels}, {self.length}). Every subject must reach a batch at one shape; crop or pad "
-                f"the cohort first, with kalecardiac.prepdata.crop_or_pad."
+                f"the cohort first, with kalecardiac.prepdata.crop_or_pad_signal."
             )
         return recording
 
@@ -426,8 +426,8 @@ class LeadSource(ModalitySource):
                 f"leads before flattening or deriving, not after."
             )
         self.source = source
-        self.lead = canonical_lead(lead)
-        self._index = lead_indices(source.leads, [self.lead])[0]
+        self.lead = normalize_lead_name(lead)
+        self._index = get_lead_indices(source.leads, [self.lead])[0]
 
     def get(self, identifier: str, index: int) -> Tensor | None:
         recording = self.source.get(identifier, index)
@@ -443,7 +443,7 @@ class LeadSource(ModalitySource):
         return f"LeadSource({self.lead} of {self.source!r})"
 
 
-def lead_sources(
+def get_lead_sources(
     source: ECGArraySource,
     leads: Sequence[str] | None = None,
     prefix: str = "",
@@ -469,5 +469,5 @@ def lead_sources(
     Raises:
         ECGFormatError: If a named lead is not in ``source``.
     """
-    chosen = source.leads if leads is None else canonical_leads(leads)
+    chosen = source.leads if leads is None else normalize_lead_names(leads)
     return {f"{prefix}{lead}": LeadSource(source, lead) for lead in chosen}

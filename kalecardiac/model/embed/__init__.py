@@ -4,7 +4,7 @@ Two families, and the bridge between them:
 
 .. code-block:: text
 
-    encoders.py            backbones adapted to a contract, and the freeze-and-embed bridge
+    encoders.py            backbones adapted to a contract, and the frozen-encoder bridge
     multimodal_vae.py      the generic multimodal VAE: encode, fuse, sample, reconstruct
     cardiovae.py           CardioVAE   -- signal + image, product of experts
     lsemvae.py             LS-EMVAE    -- one encoder per lead, hierarchical fusion, shared decoder
@@ -21,7 +21,9 @@ clinical head on. Pretraining and fine-tuning therefore share the same encoders 
 differ only in the task handed to the trainer.
 """
 
-from kalecardiac.model.embed.cardiovae import IMAGE, SIGNAL, CardioVAE
+from typing import TYPE_CHECKING
+
+from kalecardiac.model.embed.cardiovae import IMAGE, SIGNAL, CardioVAE, remap_pykale_state_dict
 from kalecardiac.model.embed.encoders import (
     SIGNAL_ENCODERS,
     FeatureEmbedder,
@@ -29,7 +31,6 @@ from kalecardiac.model.embed.encoders import (
     VariationalEncoder,
     build_image_encoder,
     build_signal_encoder,
-    freeze,
 )
 from kalecardiac.model.embed.lsemvae import LSEMVAE
 from kalecardiac.model.embed.multimodal_fusion import (
@@ -44,33 +45,41 @@ from kalecardiac.model.embed.multimodal_fusion import (
     modality_dropout,
 )
 from kalecardiac.model.embed.multimodal_vae import MultimodalVAE, VAEOutput, VAEStream
+from kalecardiac.utils.renames import renamed
 
 __all__ = [
-    "FUSION_METHODS",
-    "IMAGE",
-    "SIGNAL",
-    "SIGNAL_ENCODERS",
     "AttentionFusion",
     "CardioVAE",
     "ConcatFusion",
+    "FUSION_METHODS",
     "FeatureEmbedder",
     "FusionBlock",
+    "IMAGE",
     "LSEMVAE",
     "LatentEmbedder",
     "MeanFusion",
     "MultimodalPredictor",
     "MultimodalVAE",
     "PredictionOutput",
+    "SIGNAL",
+    "SIGNAL_ENCODERS",
     "VAEOutput",
     "VAEStream",
     "VariationalEncoder",
     "build_fusion",
     "build_image_encoder",
     "build_signal_encoder",
-    "freeze",
     "modality_dropout",
+    "remap_pykale_state_dict",
 ]
 
 
 def __dir__():
     return sorted(__all__)
+
+
+if not TYPE_CHECKING:
+    # At runtime only: a module-level __getattr__ that a type checker saw would make
+    # every misspelt import type-check.
+    def __getattr__(name: str):
+        raise renamed(__name__, name)

@@ -6,7 +6,7 @@ slice, a CT section or an echocardiography frame; what differs between them is h
 file is read and what preprocessing it needs, and both of those are arguments rather
 than assumptions.
 
-Two sources, mirroring :mod:`kalecardiac.loaddata.ecg_access`:
+Two sources, mirroring :mod:`kalecardiac.loaddata.signal_access`:
 
 * :class:`ImageArraySource` for arrays already in memory;
 * :class:`ImageFileSource` for one file per subject, read in the DataLoader worker.
@@ -35,7 +35,7 @@ class ImageFormatError(ValueError):
     """Raised when an image does not have the shape it was declared with."""
 
 
-def as_image_array(value: ArrayLike, channels: int) -> np.ndarray:
+def check_image_array(value: ArrayLike, channels: int) -> np.ndarray:
     """Coerce an image to ``(channels, height, width)`` float32.
 
     A two-dimensional input gains a leading axis, and a ``(height, width, channels)``
@@ -105,7 +105,7 @@ class ImageArraySource(ModalitySource):
         self.size = tuple(int(extent) for extent in size)
 
     def _read(self, identifier: str) -> Tensor:
-        array = as_image_array(self.images[identifier], self.channels)
+        array = check_image_array(self.images[identifier], self.channels)
         if self.transform is not None:
             array = np.asarray(self.transform(array), dtype=np.float32)
             if array.ndim != 3 or array.shape[0] != self.channels:
@@ -202,7 +202,7 @@ class ImageFileSource(ImageArraySource):
 
 
 class _LazyImages(Mapping):
-    """A read-through view of a file source's paths; see ``ecg_access._LazyRecordings``."""
+    """A read-through view of a file source's paths; see ``signal_access._LazyRecordings``."""
 
     def __init__(self, source: ImageFileSource) -> None:
         self._source = source

@@ -24,7 +24,7 @@ from kalecardiac.loaddata import (
     ImageArraySource,
     MultimodalDataset,
     collate_subjects,
-    lead_sources,
+    get_lead_sources,
 )
 
 #: Kept small enough that a five-fold split still leaves both classes in every fold.
@@ -70,7 +70,7 @@ def label_target(cohort):
 @pytest.fixture
 def lead_dataset(cohort, ecg_source, label_target):
     """One modality per lead, which is what a lead-specific model consumes."""
-    return MultimodalDataset(cohort.subject_id, lead_sources(ecg_source), target=label_target)
+    return MultimodalDataset(cohort.subject_id, get_lead_sources(ecg_source), target=label_target)
 
 
 @pytest.fixture

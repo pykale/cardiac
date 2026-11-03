@@ -15,7 +15,7 @@ per-timepoint map into a lead ranking.
 
 **Which part of the cardiac cycle.** :func:`segment_attribution_ratios` does the same
 within named windows of the signal, so "the model attends to the T wave" becomes a
-number. The windows are supplied by the caller; :func:`ecg_wave_segments` finds them
+number. The windows are supplied by the caller; :func:`delineate_ecg_waves` finds them
 with NeuroKit2 for anyone who has it.
 
 :func:`modality_ablation` is the counterpart that needs no gradients: withhold a
@@ -33,7 +33,7 @@ from numbers the library produced.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 
 import numpy as np
 import torch
@@ -41,6 +41,7 @@ from numpy.typing import ArrayLike
 from torch import Tensor, nn
 
 from kalecardiac.evaluate.classification_metrics import MetricError
+from kalecardiac.evaluate.predictions import predict_split
 from kalecardiac.loaddata.multimodal_access import SubjectBatch
 
 #: Smallest attribution range treated as real. Below it every sample was attributed
@@ -59,7 +60,7 @@ def _require_captum():
     return IntegratedGradients
 
 
-def normalise_attribution(attribution: ArrayLike) -> np.ndarray:
+def normalize_attribution(attribution: ArrayLike) -> np.ndarray:
     """Rescale an attribution map to ``[0, 1]``.
 
     Min-max rather than by absolute value, matching the cardiac reference
@@ -201,7 +202,7 @@ def attribution_ratio(attribution: ArrayLike, threshold: float = 0.7) -> float:
     """
     if not 0.0 <= threshold <= 1.0:
         raise ValueError(f"threshold must lie in [0, 1], got {threshold}")
-    normalised = normalise_attribution(attribution).ravel()
+    normalised = normalize_attribution(attribution).ravel()
     if normalised.size == 0:
         raise ValueError("cannot take a ratio of an empty attribution map")
     return float((normalised >= threshold).mean())
@@ -272,7 +273,7 @@ def segment_attribution_ratios(
     if window < 0:
         raise ValueError(f"window must be non-negative, got {window}")
 
-    normalised = normalise_attribution(attribution).ravel()
+    normalised = normalize_attribution(attribution).ravel()
     if normalised.size == 0:
         raise ValueError("cannot take a ratio of an empty attribution map")
     important = set(np.flatnonzero(normalised >= threshold).tolist())
@@ -297,7 +298,7 @@ def segment_attribution_ratios(
     }
 
 
-def ecg_wave_segments(signal: ArrayLike, sampling_rate: float = 500.0) -> dict[str, list[int]]:
+def delineate_ecg_waves(signal: ArrayLike, sampling_rate: float = 500.0) -> dict[str, list[int]]:
     """Locate the P, Q, R, S and T waves of a single-lead ECG.
 
     A thin wrapper over NeuroKit2's R-peak detection and wavelet delineation, so that
@@ -510,24 +511,22 @@ def _modalities_read(model: nn.Module, batches: Sequence[SubjectBatch]) -> list[
 def _rescore(model: nn.Module, batches: Sequence[SubjectBatch], withhold: Sequence[str]) -> np.ndarray:
     """The model's scores with ``withhold`` marked absent for every subject.
 
-    Each batch is copied rather than edited, so a caller can reuse its loader. Scores
-    are shaped as :func:`~kalecardiac.evaluate.predict_split` shapes them.
+    Each batch is copied rather than edited, so a caller can reuse its loader. Scored by
+    :func:`~kalecardiac.evaluate.predict_split`, so the scores are shaped as it shapes
+    them -- one column squeezed away, several kept.
     """
-    scores = []
-    for batch in batches:
-        present = dict(batch.present)
-        for name in withhold:
-            present[name] = torch.zeros_like(present[name])
-        used = SubjectBatch(
-            subject_id=batch.subject_id,
-            modalities=batch.modalities,
-            present=present,
-            target=batch.target,
-            metadata=batch.metadata,
-        )
-        output = model.predict(used) if hasattr(model, "predict") else model(used.modalities, used.present)
-        scores.append(output.prediction.detach().cpu().float().reshape(len(used), -1).numpy())
-    stacked = np.concatenate(scores)
-    # Keeping only the first column would score a multiclass model on one class's
-    # logit; squeeze only when there is a single column, as predict_split does.
-    return stacked[:, 0] if stacked.shape[1] == 1 else stacked
+
+    def masked() -> Iterator[SubjectBatch]:
+        for batch in batches:
+            present = dict(batch.present)
+            for name in withhold:
+                present[name] = torch.zeros_like(present[name])
+            yield SubjectBatch(
+                subject_id=batch.subject_id,
+                modalities=batch.modalities,
+                present=present,
+                target=batch.target,
+                metadata=batch.metadata,
+            )
+
+    return predict_split(model, masked()).scores

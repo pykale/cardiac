@@ -17,13 +17,13 @@ from kalecardiac.model.layers import (
     GaussianHead,
     GaussianPosterior,
     build_expert_fusion,
-    expert_groups,
+    get_expert_groups,
     hierarchical_experts,
     mean_of_experts,
     mixture_of_experts,
     prior_expert,
     product_of_experts,
-    reparameterise,
+    reparameterize,
     wasserstein_barycenter,
 )
 
@@ -47,17 +47,17 @@ class TestGaussianPosterior:
 
 class TestReparameterise:
     def test_output_has_the_shape_of_the_mean(self):
-        assert reparameterise(torch.zeros(4, 8), torch.zeros(4, 8)).shape == (4, 8)
+        assert reparameterize(torch.zeros(4, 8), torch.zeros(4, 8)).shape == (4, 8)
 
     def test_zero_variance_returns_the_mean(self):
         mean = torch.randn(4, 8)
-        sample = reparameterise(mean, torch.full((4, 8), -60.0))
+        sample = reparameterize(mean, torch.full((4, 8), -60.0))
         assert torch.allclose(sample, mean, atol=1e-6)
 
     def test_gradients_flow_to_both_parameters(self):
         mean = torch.zeros(4, 8, requires_grad=True)
         log_var = torch.zeros(4, 8, requires_grad=True)
-        reparameterise(mean, log_var).sum().backward()
+        reparameterize(mean, log_var).sum().backward()
         assert mean.grad is not None and log_var.grad is not None
         # The mean's gradient is exactly one; the trick's whole point.
         assert torch.allclose(mean.grad, torch.ones_like(mean))
@@ -66,12 +66,12 @@ class TestReparameterise:
         # A documented departure from the reference implementations, which returned the
         # mean whenever the module was not training and so silently changed the ELBO.
         mean, log_var = torch.zeros(1000, 4), torch.zeros(1000, 4)
-        assert not torch.allclose(reparameterise(mean, log_var), mean)
+        assert not torch.allclose(reparameterize(mean, log_var), mean)
 
     def test_a_generator_makes_a_draw_reproducible(self):
         mean, log_var = torch.zeros(4, 8), torch.zeros(4, 8)
-        first = reparameterise(mean, log_var, generator=torch.Generator().manual_seed(1))
-        second = reparameterise(mean, log_var, generator=torch.Generator().manual_seed(1))
+        first = reparameterize(mean, log_var, generator=torch.Generator().manual_seed(1))
+        second = reparameterize(mean, log_var, generator=torch.Generator().manual_seed(1))
         assert torch.equal(first, second)
 
 
@@ -177,28 +177,28 @@ class TestExpertGroups:
     def test_every_expert_lands_in_exactly_one_group(self):
         for count in range(1, 20):
             for groups in range(1, 6):
-                assignment = expert_groups(count, groups)
+                assignment = get_expert_groups(count, groups)
                 flattened = [index for group in assignment for index in group]
                 assert sorted(flattened) == list(range(count)), (count, groups)
 
     def test_thirteen_experts_in_four_groups_keeps_all_thirteen(self):
         # The reference implementation took four slices of 13 // 4 == 3 and silently
         # discarded the thirteenth expert, which was the prior.
-        assignment = expert_groups(13, 4)
+        assignment = get_expert_groups(13, 4)
         assert sum(len(group) for group in assignment) == 13
         assert [len(group) for group in assignment] == [4, 3, 3, 3]
 
     def test_groups_differ_in_size_by_at_most_one(self):
-        sizes = [len(group) for group in expert_groups(14, 4)]
+        sizes = [len(group) for group in get_expert_groups(14, 4)]
         assert max(sizes) - min(sizes) <= 1
 
     def test_more_groups_than_experts_gives_one_each(self):
-        assert expert_groups(3, 10) == [[0], [1], [2]]
+        assert get_expert_groups(3, 10) == [[0], [1], [2]]
 
     @pytest.mark.parametrize("count,groups", [(0, 2), (5, 0)])
     def test_non_positive_arguments_are_rejected(self, count, groups):
         with pytest.raises(ValueError):
-            expert_groups(count, groups)
+            get_expert_groups(count, groups)
 
 
 class TestHierarchicalExperts:

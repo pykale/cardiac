@@ -59,14 +59,14 @@ from kalecardiac.evaluate import binary_metrics, predict_split
 from kalecardiac.loaddata import (
     ColumnTarget,
     ECGArraySource,
-    HoldOut,
+    HoldOutSplit,
     MultimodalDataset,
     collate_subjects,
-    lead_sources,
+    get_lead_sources,
 )
 from kalecardiac.model.embed import LSEMVAE, MultimodalPredictor
 from kalecardiac.pipeline import CardiacTrainer, ClassificationTask, ReconstructionTask
-from kalecardiac.prepdata import build_ecg_pipeline
+from kalecardiac.prepdata import get_ecg_transform
 from kalecardiac.utils import set_seed
 
 set_seed(2026)
@@ -77,9 +77,9 @@ recordings = ECGArraySource(
     cohort.ecg,
     leads=cohort.leads,
     sampling_rate=cohort.sampling_rate,
-    transform=build_ecg_pipeline(length=512, sampling_rate=cohort.sampling_rate),
+    transform=get_ecg_transform(length=512, sampling_rate=cohort.sampling_rate),
 )
-sources = lead_sources(recordings)  # {"I": ..., "II": ..., ...}
+sources = get_lead_sources(recordings)  # {"I": ..., "II": ..., ...}
 target = ColumnTarget.from_mapping({"label": cohort.labels})
 
 
@@ -98,7 +98,9 @@ pl.Trainer(max_epochs=5, accelerator="cpu", logger=False, enable_checkpointing=F
 # --- fine-tune: frozen encoders, a subset of the leads ----------------------------
 frame = target.frame(cohort.subject_id)
 split = next(
-    HoldOut(test_size=0.25, val_size=0.2, group_by="subject_id", stratify_by=["label"], random_state=0).split(frame)
+    HoldOutSplit(test_size=0.25, val_size=0.2, group_by="subject_id", stratify_by=["label"], random_state=0).split(
+        frame
+    )
 )
 ids = {name: sorted(frame.iloc[split[name]]["subject_id"]) for name in ("train", "val", "test")}
 
@@ -129,7 +131,7 @@ recordings = ECGFileSource(
     {"S001": "/data/ecg/S001.npy", "S002": "/data/ecg/S002.npy"},
     leads=["I", "II", "III", "aVR", "aVL", "aVF"],
     sampling_rate=500,
-    transform=build_ecg_pipeline(length=5000, sampling_rate=500),
+    transform=get_ecg_transform(length=5000, sampling_rate=500),
 )
 ```
 

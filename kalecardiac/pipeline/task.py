@@ -26,20 +26,15 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 
+import numpy as np
 import torch
+from sklearn.metrics import r2_score
 from torch import Tensor, nn
 
 from kalecardiac.evaluate.classification_metrics import MetricError, multiclass_roc_auc, roc_auc
-from kalecardiac.evaluate.regression_metrics import r2_score
 from kalecardiac.loaddata.multimodal_access import LABEL_KEY, VALUE_KEY, SubjectBatch
 from kalecardiac.model.predict.heads import LinearHead, MLPHead
-from kalecardiac.model.predict.losses import (
-    binary_cross_entropy,
-    cross_entropy,
-    elbo_loss,
-    latent_alignment_loss,
-    mean_squared_error,
-)
+from kalecardiac.model.predict.losses import elbo_loss, latent_alignment_loss
 
 
 class PredictionTask(nn.Module, ABC):
@@ -138,11 +133,10 @@ class ClassificationTask(PredictionTask):
         num_classes: How many classes. 2 gives a single logit and binary
             cross-entropy.
         pos_weight: Weight on the positive class, binary only. A cardiac endpoint is
-            usually imbalanced, and
-            :func:`~kalecardiac.model.predict.positive_weight_from_labels` computes
-            this from the *training* split. 0 disables it.
-        class_weight: ``(num_classes,)`` weights, multiclass only; see
-            :func:`~kalecardiac.model.predict.class_weight_from_labels`.
+            usually imbalanced; the usual weight is the training split's ratio of
+            negatives to positives. 0 disables it.
+        class_weight: ``(num_classes,)`` weights, multiclass only, e.g. scikit-learn's
+            ``compute_class_weight("balanced", ...)`` over the *training* split's labels.
         hidden_dims: Hidden widths of the head. Empty gives a linear head.
         dropout: Dropout inside the head.
 
@@ -201,9 +195,11 @@ class ClassificationTask(PredictionTask):
     def loss(self, output, batch: SubjectBatch, epoch: int = 0) -> tuple[Tensor, dict[str, float]]:
         targets = batch.target[LABEL_KEY]
         if self.num_classes == 2:
-            value = binary_cross_entropy(output.prediction, targets, pos_weight=self.pos_weight)
+            value = nn.functional.binary_cross_entropy_with_logits(
+                output.prediction.reshape(-1), targets.reshape(-1).float(), pos_weight=self.pos_weight
+            )
         else:
-            value = cross_entropy(output.prediction, targets, class_weight=self.class_weight)
+            value = nn.functional.cross_entropy(output.prediction, targets.reshape(-1).long(), weight=self.class_weight)
         return value, {"loss": float(value.detach())}
 
     def scores(self, output) -> Tensor:
@@ -254,14 +250,24 @@ class RegressionTask(PredictionTask):
         return MLPHead(in_features, 1, hidden_dims=self.hidden_dims, dropout=self.dropout)
 
     def loss(self, output, batch: SubjectBatch, epoch: int = 0) -> tuple[Tensor, dict[str, float]]:
-        value = mean_squared_error(output.prediction, batch.target[VALUE_KEY])
+        value = nn.functional.mse_loss(output.prediction.reshape(-1), batch.target[VALUE_KEY].reshape(-1).float())
         return value, {"loss": float(value.detach())}
 
     def scores(self, output) -> Tensor:
         return output.prediction.reshape(-1)
 
     def metric(self, scores: Tensor, targets: Mapping[str, Tensor]) -> float:
-        return r2_score(targets[VALUE_KEY].double().numpy(), scores.double().numpy())
+        """R-squared, by :func:`sklearn.metrics.r2_score`.
+
+        Raises:
+            MetricError: If every target is the same value, where R-squared is undefined
+                -- scikit-learn would report 0 or 1, which the trainer would log as a
+                result.
+        """
+        values = targets[VALUE_KEY].double().numpy()
+        if values.size == 0 or np.ptp(values) == 0:
+            raise MetricError("every target has the same value, so R-squared is undefined for this split")
+        return float(r2_score(values, scores.double().numpy()))
 
 
 class ReconstructionTask(PredictionTask):

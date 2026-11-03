@@ -21,6 +21,8 @@ from examples.cardiovae_multimodal import data as cardiovae_data
 from examples.cardiovae_multimodal import runner as cardiovae_runner
 from examples.lsemvae_ecg import data as lsemvae_data
 from examples.lsemvae_ecg import runner as lsemvae_runner
+from kalecardiac.auto import get_ecg_transform_from_cfg, pretrain
+from kalecardiac.loaddata import MultimodalDataset
 from tests.examples.test_example_workflows import cardiovae_cfg, lsemvae_cfg
 
 SIX = 6
@@ -34,32 +36,63 @@ SAMPLES = 64
 
 class TestSourceSamplingRate:
     def test_cardiovae_resamples_each_lead_before_flattening(self, tmp_path):
-        # Each lead is a different constant, so the flattened strip must be piecewise
-        # constant with integer values. Resampling *after* flattening would interpolate
-        # across each join between two leads and leave fractional values there.
+        # Each lead is a different constant, so the strip must hold only those constants.
+        # Resampling *after* flattening runs the filter across neighbouring leads and
+        # leaves values between them; the polyphase filter's own ripple on a constant is
+        # three thousandths.
         cfg = cardiovae_cfg(
             tmp_path,
-            **{"ECG.SOURCE_SAMPLING_RATE": 250, "ECG.STANDARDISE": False, "ECG.LENGTH": SIX * SAMPLES * 2},
+            **{"ECG.SOURCE_SAMPLING_RATE": 250, "ECG.NORMALIZE": False, "ECG.LENGTH": SIX * SAMPLES * 2},
         )
-        pipeline = cardiovae_data.ecg_pipeline(cfg, flatten=True)
+        pipeline = cardiovae_data.ecg_pipeline(cfg, flatten=True, num_leads=SIX)
         recording = np.repeat(np.arange(SIX, dtype=np.float32)[:, None], SAMPLES, axis=1)
 
         strip = pipeline(recording)
 
         assert strip.shape == (1, SIX * SAMPLES * 2)
-        assert np.allclose(strip, np.round(strip)), "a resample crossed the boundary between two leads"
-        blocks = strip.reshape(SIX, SAMPLES * 2)
-        assert np.array_equal(blocks, np.repeat(np.arange(SIX)[:, None], SAMPLES * 2, axis=1))
+        assert np.allclose(strip, np.round(strip), atol=0.05), "a resample crossed from one lead into another"
+
+    def test_cardiovae_interleaves_the_leads_as_the_reference_does(self, tmp_path):
+        # The reference flattens a (samples, leads) recording row by row, so each time
+        # step's leads sit together -- the layout the published checkpoint expects.
+        cfg = cardiovae_cfg(tmp_path, **{"ECG.NORMALIZE": False, "ECG.LENGTH": SIX * SAMPLES})
+        recording = np.arange(SIX * SAMPLES, dtype=np.float32).reshape(SIX, SAMPLES)
+        strip = cardiovae_data.ecg_pipeline(cfg, flatten=True, num_leads=SIX)(recording)
+        assert np.array_equal(strip[0], recording.T.reshape(-1))
+        assert np.array_equal(strip[0, :SIX], recording[:, 0])
+
+    def test_cardiovae_normalizes_each_lead_before_interleaving(self, tmp_path):
+        # Per lead, as the reference does: a lead recorded at ten times the amplitude of
+        # another comes out on the same scale.
+        cfg = cardiovae_cfg(tmp_path, **{"ECG.LENGTH": 2 * SAMPLES})
+        generator = np.random.default_rng(0)
+        recording = np.vstack([generator.normal(size=SAMPLES), 10 * generator.normal(size=SAMPLES)])
+        strip = cardiovae_data.ecg_pipeline(cfg, flatten=True, num_leads=2)(recording)
+        leads = strip[0].reshape(SAMPLES, 2).T
+        assert np.allclose(leads.std(axis=1), 1.0, atol=1e-4)
+
+    def test_cardiovae_crops_each_lead_to_its_share(self, tmp_path):
+        # A longer recording loses the end of every lead, never a whole lead.
+        cfg = cardiovae_cfg(tmp_path, **{"ECG.NORMALIZE": False, "ECG.LENGTH": SIX * SAMPLES})
+        recording = np.repeat(np.arange(SIX, dtype=np.float32)[:, None], 2 * SAMPLES, axis=1)
+        strip = cardiovae_data.ecg_pipeline(cfg, flatten=True, num_leads=SIX)(recording)
+        assert sorted(set(strip[0].tolist())) == list(range(SIX))
+
+    def test_a_length_that_does_not_divide_among_the_leads_is_refused(self, tmp_path):
+        cfg = cardiovae_cfg(tmp_path, **{"ECG.LENGTH": SIX * SAMPLES + 1})
+        with pytest.raises(ValueError, match="whole number of samples"):
+            cardiovae_data.ecg_pipeline(cfg, flatten=True, num_leads=SIX)
 
     def test_cardiovae_pipeline_lists_the_steps_in_order(self, tmp_path):
         cfg = cardiovae_cfg(tmp_path, **{"ECG.SOURCE_SAMPLING_RATE": 250, "ECG.LENGTH": SIX * SAMPLES * 2})
-        steps = repr(cardiovae_data.ecg_pipeline(cfg, flatten=True))
-        order = [steps.index(name) for name in ("interpolate_missing", "resample", "_flatten_leads", "crop_or_pad")]
+        steps = repr(cardiovae_data.ecg_pipeline(cfg, flatten=True, num_leads=SIX))
+        names = ("interpolate_signal", "resample_signal", "crop_or_pad_signal", "normalize_signal", "_interleave_leads")
+        order = [steps.index(name) for name in names]
         assert order == sorted(order), steps
 
     def test_no_resample_when_the_rates_agree(self, tmp_path):
         cfg = cardiovae_cfg(tmp_path)
-        assert "resample" not in repr(cardiovae_data.ecg_pipeline(cfg, flatten=True))
+        assert "resample" not in repr(cardiovae_data.ecg_pipeline(cfg, flatten=True, num_leads=SIX))
 
     def test_cardiovae_cohort_arrives_at_the_model_rate(self, tmp_path):
         cfg = cardiovae_cfg(tmp_path, **{"ECG.SOURCE_SAMPLING_RATE": 250, "ECG.LENGTH": SIX * SAMPLES * 2})
@@ -78,9 +111,10 @@ class TestSourceSamplingRate:
         assert lead.shape == (1, SAMPLES * 2)
 
     def test_lsemvae_pipeline_resamples_after_interpolating(self, tmp_path):
+        # The example preprocesses with the library's transform, configured from its cfg.
         cfg = lsemvae_cfg(tmp_path, **{"ECG.SOURCE_SAMPLING_RATE": 250, "ECG.LENGTH": SAMPLES * 2})
-        steps = repr(lsemvae_data.signal_pipeline(cfg))
-        assert steps.index("interpolate_missing") < steps.index("resample") < steps.index("crop_or_pad")
+        steps = repr(get_ecg_transform_from_cfg(cfg))
+        assert steps.index("interpolate_signal") < steps.index("resample_signal") < steps.index("crop_or_pad_signal")
 
 
 # --------------------------------------------------------------------------- #
@@ -132,13 +166,16 @@ class TestModelName:
             lsemvae_runner.run(cfg)
         assert not (tmp_path / "lsemvae").exists()
 
-    @pytest.mark.parametrize("check", [cardiovae_runner.check_model_name, lsemvae_runner.check_model_name])
-    def test_the_message_points_at_the_fusion_ablation(self, tmp_path, check):
+    @pytest.mark.parametrize(
+        ("make_cfg", "runner"),
+        [(cardiovae_cfg, cardiovae_runner), (lsemvae_cfg, lsemvae_runner)],
+        ids=["cardiovae", "lsemvae"],
+    )
+    def test_the_message_points_at_the_fusion_ablation(self, tmp_path, make_cfg, runner):
         # The likeliest reason to change MODEL.NAME is to try another fusion, which is a
         # different key; the error says so.
-        cfg = cardiovae_cfg(tmp_path, **{"MODEL.NAME": "multimodal_vae"})
         with pytest.raises(ValueError, match="FUSION.LATENT_METHOD"):
-            check(cfg)
+            runner.run(make_cfg(tmp_path, **{"MODEL.NAME": "multimodal_vae"}))
 
 
 # --------------------------------------------------------------------------- #
@@ -203,7 +240,9 @@ class TestPretrainedCheckpoint:
         path = tmp_path / "pretrained.pt"
         torch.save(saved.state_dict(), path)
 
-        loaded = cardiovae_runner.load_pretrained(cardiovae_cfg(tmp_path, **{"MODEL.PRETRAINED": str(path)}), cohort)
+        given = cardiovae_cfg(tmp_path, **{"MODEL.PRETRAINED": str(path)})
+        dataset = MultimodalDataset(cohort.pretrain_ids, cohort.sources)
+        loaded = pretrain(given, cardiovae_runner.build_model(given, cohort), dataset, tmp_path / "run")
         for ours, theirs in zip(loaded.parameters(), saved.parameters(), strict=True):
             assert torch.equal(ours, theirs)
 
@@ -214,25 +253,15 @@ class TestPretrainedCheckpoint:
         path = tmp_path / "pretrained.pt"
         torch.save(saved.state_dict(), path)
 
-        loaded = lsemvae_runner.load_pretrained(lsemvae_cfg(tmp_path, **{"MODEL.PRETRAINED": str(path)}), cohort)
+        # Built over every pretraining lead, as the run builds it, so a checkpoint saved
+        # from one run loads into the next.
+        given = lsemvae_cfg(tmp_path, **{"MODEL.PRETRAINED": str(path)})
+        dataset = MultimodalDataset(cohort.pretrain_ids, cohort.pretrain_sources)
+        loaded = pretrain(
+            given, lsemvae_runner.build_model(given, cohort, cohort.pretrain_leads), dataset, tmp_path / "run"
+        )
         for ours, theirs in zip(loaded.parameters(), saved.parameters(), strict=True):
             assert torch.equal(ours, theirs)
-
-    def test_a_checkpoint_from_another_architecture_fails_loudly(self, tmp_path):
-        # Half-loading would fine-tune on encoders that are partly random.
-        cfg = cardiovae_cfg(tmp_path, **{"MODEL.LATENT_DIM": 8})
-        cohort = cardiovae_data.load_cohort(cfg)
-        path = tmp_path / "pretrained.pt"
-        torch.save(cardiovae_runner.build_model(cfg, cohort).state_dict(), path)
-
-        wider = cardiovae_cfg(tmp_path, **{"MODEL.LATENT_DIM": 16, "MODEL.PRETRAINED": str(path)})
-        with pytest.raises(RuntimeError):
-            cardiovae_runner.load_pretrained(wider, cohort)
-
-    def test_a_missing_checkpoint_is_reported_by_path(self, tmp_path):
-        cfg = cardiovae_cfg(tmp_path, **{"MODEL.PRETRAINED": str(tmp_path / "absent.pt")})
-        with pytest.raises(FileNotFoundError, match="absent.pt"):
-            cardiovae_runner.load_pretrained(cfg, cardiovae_data.load_cohort(cfg))
 
     @pytest.mark.slow
     def test_cardiovae_skips_pretraining_when_given_a_checkpoint(self, tmp_path):

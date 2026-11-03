@@ -8,6 +8,28 @@ Notable changes to KaleCardiac. The format follows
 
 ### Added
 
+- **`kalecardiac.auto`: the workflow both examples share, read from a configuration.**
+  `auto.endpoint` turns `ENDPOINT` into labels, a task and scores (`check_endpoint`,
+  `derive_endpoint`, `get_endpoint_target`, `get_prediction_task`, `score_predictions`,
+  `get_headline_metric`, `get_ablation_metric`); `auto.workflow` pretrains, draws the
+  folds, fine-tunes, scores and interprets (`pretrain`, `get_folds`, `fine_tune`,
+  `cross_validate`, `interpret_model`, `get_ecg_transform_from_cfg`). The two runners
+  had each carried a copy of all of it; a test now fails if a runner defines `pretrain`,
+  `fine_tune` or `cross_validate` again.
+- `ENDPOINT` and `FINETUNE` are sections of the package schema, with defaults that name
+  nothing, rather than nodes each example created. `SOLVER.GRAD_CLIP`,
+  `OUTPUT.ATTRIBUTION_THRESHOLD` and `OUTPUT.ATTRIBUTION_STEPS` replace values both
+  examples hardcoded, at the same values.
+- `evaluate.flatten_fold_summary`, a fold summary as one row of a results table.
+- **A tutorial notebook**, `tutorials/cardiac_abnormality_assessment.ipynb`: PyKale's
+  cardiothoracic abnormality tutorial, step for step on the same data, with the
+  KaleCardiac API. It runs on synthetic stand-ins without the data, and a test runs it.
+- **The published CardioVAE weights load.** `CardioVAE.load_pykale_state_dict` reads a
+  checkpoint saved from PyKale's `SignalImageVAE` or the reference implementation,
+  through `remap_pykale_state_dict` and PyKale's own `remap_state_dict_keys`. Loaded
+  into both, the same weights give identical encoder and decoder outputs.
+- `MultimodalDataset.from_arrays`, a cohort straight from aligned tensors, as PyKale's
+  `SignalImageDataset` takes them.
 - **Multiclass endpoints, end to end.** `multiclass_roc_auc` (macro one-versus-rest, so
   a rare class weighs as much as a common one). `ClassificationTask` monitors it when
   `num_classes > 2`, and the trainer accumulates a row of class probabilities per
@@ -21,10 +43,10 @@ Notable changes to KaleCardiac. The format follows
 - `CardioVAE` takes `fusion`, `use_prior`, `num_groups` and `kernel_size`;
   `LSEMVAE` takes `kernel_size`; `Conv1dEncoder` and `Conv2dEncoder` take `padding`.
 - Example configuration keys that were declared but never read now act:
-  `ECG.SOURCE_SAMPLING_RATE` resamples each lead (before flattening, in CardioVAE),
-  `MODEL.KERNEL_SIZE` sets the encoders, `MODEL.PRETRAINED` loads a checkpoint strictly
-  and skips pretraining, `MODEL.NAME` is checked at start-up, and CardioVAE honours
-  `FUSION.LATENT_METHOD`, `FUSION.USE_PRIOR` and `FUSION.NUM_GROUPS`.
+  `ECG.SOURCE_SAMPLING_RATE` resamples each lead, `MODEL.KERNEL_SIZE` sets the
+  convolutions, `MODEL.PRETRAINED` loads a checkpoint strictly and skips pretraining,
+  `MODEL.NAME` is checked at start-up, and CardioVAE honours `FUSION.LATENT_METHOD`,
+  `FUSION.USE_PRIOR` and `FUSION.NUM_GROUPS`.
 - Modality ablation runs for a regression endpoint too, measured in R².
 - An API reference built with Sphinx, one page per pipeline stage, and a Read the Docs
   configuration. The library's docstring examples now run as doctests.
@@ -35,26 +57,97 @@ Notable changes to KaleCardiac. The format follows
   build the documentation with warnings as errors.
 - Tests that a working pipeline scores clearly above chance and that an unlearnable
   endpoint scores about 0.5 — a score well above chance there would be a leak.
-- Tests for every line of the library, including the trainer's test loop and its
-  recovery from a one-class validation split, which had never run; CI fails below 98%.
+- Tests for every line of the library; CI fails below 98% coverage.
 
 ### Changed
 
+- **The examples run through `kalecardiac.auto`.** A runner keeps what it compares, the
+  model it builds and its own reports; LS-EMVAE's robustness curve runs as the `report`
+  `cross_validate` calls after each fold. Both preprocess with
+  `prepdata.get_ecg_transform` rather than their own copies of its steps, and both
+  command lines read their group flag, configuration and results table through
+  `examples/cli.py`.
+- Each fold fine-tunes a copy of the pretrained model, where each runner rebuilt the
+  model and loaded the weights into it. Building drew random numbers that copying does
+  not, so fold scores differ from earlier runs.
+- LS-EMVAE's `lead_importance.csv` is `attribution.csv`, which CardioVAE now writes too.
+  A model reading one modality reports no ablation -- withholding its only modality
+  leaves it nothing to read -- as CardioVAE already did and LS-EMVAE's single-lead
+  groups did not.
+- `MultimodalVAE.latent_embedders` is annotated as taking any iterable of names, and
+  `save_predictions` any mapping of metrics, as both always accepted.
+- **Names follow PyKale.** Modules are named for their modality, functions that act
+  start with a verb, and identifiers use American spelling, as in PyKale, scikit-learn
+  and PyTorch. Among the renames:
+
+  | Before | Now |
+  | --- | --- |
+  | `loaddata.ecg_access` | `loaddata.signal_access` |
+  | `interpolate_missing`, `standardise`, `resample` | `interpolate_signal`, `normalize_signal`, `resample_signal` |
+  | `crop_or_pad`, `scale_amplitude`, `clip_amplitude` | `crop_or_pad_signal`, `scale_signal`, `clip_signal` |
+  | `as_signal`, `as_image`, `as_lead_array`, `as_image_array` | `check_signal`, `check_image`, `check_ecg_array`, `check_image_array` |
+  | `build_ecg_pipeline`, `build_image_pipeline`, `lead_selector` | `get_ecg_transform`, `get_image_transform`, `get_lead_selector` |
+  | `scale_image`, `standardise_image` | `scale_image_intensity`, `normalize_image` |
+  | `canonical_lead(s)`, `lead_indices`, `lead_sources` | `normalize_lead_name(s)`, `get_lead_indices`, `get_lead_sources` |
+  | `HoldOut`, `CrossValidation`, `Predefined`, `CohortSplitter` | `HoldOutSplit`, `CrossValidationSplit`, `PredefinedSplit`, `BaseSplitter` |
+  | `composite_labels`, `expert_groups`, `reparameterise` | `get_stratification_labels`, `get_expert_groups`, `reparameterize` |
+  | `summarise_folds`, `normalise_attribution` | `summarize_folds`, `normalize_attribution` |
+  | `ecg_wave_segments`, `latent_embedding` | `delineate_ecg_waves`, `project_latents` |
+  | `ECG.STANDARDISE` | `ECG.NORMALIZE` |
+  | the arguments `standardise_leads`, `standardise`, `centre`, `centre_crop` | `normalize_leads`, `normalize`, `center`, `center_crop` |
+
+  Code or a YAML file still using an old name fails with the new one in the message:
+  importing an old name from the subpackage that exported it raises an `ImportError`
+  naming its replacement, or the dependency's function that replaced it, and
+  `ECG.STANDARDISE` is a renamed key to YACS.
+
+- **What a dependency already provides is no longer duplicated.** Transforms are chained
+  with `torchvision.transforms.Compose`, replacing `SignalPipeline`, `ImagePipeline` and
+  `step_name`. Tasks call PyTorch's losses directly, replacing `binary_cross_entropy`,
+  `cross_entropy` and `mean_squared_error`; class weights come from scikit-learn's
+  `compute_class_weight`, replacing `class_weight_from_labels` and
+  `positive_weight_from_labels`; `r2_score` and the regression metrics are
+  scikit-learn's; freezing is `module.requires_grad_`, replacing `freeze`; and
+  `train_test_split` and `subject_frame` are gone in favour of `HoldOutSplit` and pandas.
+  The ablations rescore through `predict_split` rather than a loop of their own.
+- `resample_signal` is SciPy's polyphase `resample_poly`, which filters before it
+  decimates, rather than linear interpolation, which aliased on downsampling.
+- `CardioVAE()` defaults to the published 60,000-sample signal, and its `kernel_size`
+  sets the decoders as well as the encoders, as in the published model.
+- `torchvision` and `scipy` are declared dependencies; both were already installed.
 - Multiclass metrics accept logits and apply the softmax themselves, as the binary ones
   accept logits; a one-versus-rest ranking, unlike a binary one, depends on it.
 - Metric and attribution functions are annotated as taking any array-like, which they
   always accepted.
 - The command lines take `argv`, configure logging in `main()` rather than on import,
   and reject a `--leads` or `--arms` value with an empty name.
-- The source distribution carries the tests, the examples they compose and the
+- The source distribution carries the tests, the examples, the tutorials and the
   documentation; the wheel still carries the library alone.
 - The licence is declared as an SPDX expression, which setuptools requires from 2027.
-- The examples derive a binary class weight with `positive_weight_from_labels` instead
-  of an inline formula. The two differ only for a training fold with no positive
-  subject, where the weight is now 1.
 
 ### Fixed
 
+- **Cross-validation folds were not stratified.** With `group_by` set,
+  `CrossValidationSplit` used scikit-learn's `StratifiedGroupKFold(shuffle=True)`, which
+  shuffles each group's class counts without shuffling which group they belong to: the
+  folds it balanced were not the folds it returned. On a table of one row per subject,
+  as both examples split, a two-fold split could hold one positive in one test fold and
+  eleven in the other. The groups are now numbered in a seeded random order and split
+  unshuffled, and every fold holds the cohort's share of each class; every example's
+  folds change.
+- `Conv1dDecoder` and `Conv2dDecoder` with `kernel_size=3` built, then failed on the
+  first forward pass with a negative output padding. Every kernel width now multiplies
+  the length by the stride exactly.
+- `CardioVAE`'s decoders used kernel 4 where the published model uses kernel 3, so the
+  published weights could not load and the documented parameter-for-parameter match
+  with PyKale's `SignalImageVAE` did not hold for the decoders.
+- The CardioVAE example flattened the twelve leads end to end and normalized the
+  flattened strip as one signal. The reference implementation normalizes each lead and
+  interleaves them sample by sample, which is what the published checkpoint expects; the
+  example now does the same, and cropping shortens every lead rather than dropping some.
+- The CardioVAE example declared one lead unless `ECG.LEADS` was set, so a real
+  twelve-lead cohort failed on its first recording; it now declares the twelve leads,
+  in the order MIMIC-IV-ECG stores them -- aVF before aVL.
 - A multiclass model was monitored on class 1 against the rest, so checkpoint
   selection favoured telling that one class apart.
 - `modality_ablation` scored a multiclass model on the first column of its output only.

@@ -107,7 +107,7 @@ the mixture.
 > **A correction to the reference implementation.** Its grouping computed
 > `group_size = M // num_groups` and took `num_groups` slices of that width, silently
 > discarding the last `M % num_groups` experts. With twelve leads plus the prior and
-> four groups that dropped the prior entirely. `expert_groups` distributes the remainder
+> four groups that dropped the prior entirely. `get_expert_groups` distributes the remainder
 > instead, so the group sizes are `[4, 3, 3, 3]` and every expert is used. See
 > [models.md](models.md#documented-departures).
 

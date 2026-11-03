@@ -75,7 +75,7 @@ class TestMakeSyntheticImageData:
         assert images["a"].shape == (1, 16, 16)
 
     def test_values_lie_in_the_unit_interval(self):
-        # Matching what build_image_pipeline produces and what a sigmoid decoder can
+        # Matching what get_image_transform produces and what a sigmoid decoder can
         # reconstruct; a mismatch makes the reconstruction term minimised by a constant.
         images = make_synthetic_image_data(["a"], size=(16, 16))
         assert images["a"].min() >= 0.0 and images["a"].max() <= 1.0

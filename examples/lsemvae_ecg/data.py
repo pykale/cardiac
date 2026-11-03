@@ -3,7 +3,8 @@
 Two cohorts rather than one, because that asymmetry is the experiment's premise:
 twelve-lead recordings with no endpoint are plentiful, and recordings paired with a
 catheter measurement are not. Everything here is a decision those cohorts force; the
-mechanisms all come from ``kalecardiac``.
+mechanisms -- the preprocessing, and the endpoint read from the table -- all come from
+``kalecardiac``.
 
 The expected layout is in this example's README. ``DATASET.ROOT`` empty falls back to
 :mod:`examples.synthetic_data`, so the workflow runs end to end with no data at all. A
@@ -15,29 +16,31 @@ from __future__ import annotations
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
-from functools import partial
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
 from examples.synthetic_data import make_synthetic_multimodal_data
+from kalecardiac.auto import (
+    check_endpoint,
+    derive_endpoint,
+    describe_class_balance,
+    get_class_balance,
+    get_ecg_transform_from_cfg,
+    get_endpoint_column,
+    get_endpoint_target,
+    get_source_sampling_rate,
+)
 from kalecardiac.loaddata import (
     ColumnTarget,
     ECGArraySource,
     ECGFileSource,
     ModalitySource,
-    canonical_leads,
-    lead_sources,
+    get_lead_sources,
+    normalize_lead_names,
 )
-from kalecardiac.prepdata import (
-    SignalPipeline,
-    crop_or_pad,
-    interpolate_missing,
-    lead_selector,
-    resample,
-    standardise,
-)
+from kalecardiac.prepdata import get_lead_selector
 
 logger = logging.getLogger("lsemvae_ecg")
 
@@ -76,40 +79,14 @@ class LeadCohort:
     synthetic: bool
     num_classes: int = 2
 
-    def frame(self) -> pd.DataFrame:
-        """The table a splitter splits."""
-        return self.table
-
     def describe(self) -> str:
         """One line summarising what was assembled."""
         origin = "synthetic" if self.synthetic else "local"
         return (
             f"{origin}: {len(self.pretrain_ids)} unlabelled subjects x {len(self.pretrain_leads)} leads for "
-            f"pretraining, {len(self.labelled_ids)} labelled ({_balance_text(self.table, self.num_classes)}) x "
-            f"{len(self.finetune_leads)} leads for fine-tuning | {self.length} samples per lead"
+            f"pretraining, {len(self.labelled_ids)} labelled ({describe_class_balance(self.table, self.num_classes)}) "
+            f"x {len(self.finetune_leads)} leads for fine-tuning | {self.length} samples per lead"
         )
-
-
-def source_rate(cfg) -> float:
-    """Rate the recordings arrive at: ``ECG.SOURCE_SAMPLING_RATE``, or the model's own."""
-    return float(cfg.ECG.SOURCE_SAMPLING_RATE or cfg.ECG.SAMPLING_RATE)
-
-
-def signal_pipeline(cfg) -> SignalPipeline:
-    """Preprocessing for one recording: interpolate, resample, crop or pad, standardise.
-
-    The order matters. Interpolation must come first because a NaN spreads through
-    everything after it, a resample included; standardisation must come last because
-    statistics taken over samples that are then cropped away describe a recording the
-    model never sees. Every step is per lead, so no step mixes one lead into another.
-    """
-    steps = [interpolate_missing]
-    if source_rate(cfg) != cfg.ECG.SAMPLING_RATE:
-        steps.append(partial(resample, source_rate=source_rate(cfg), target_rate=cfg.ECG.SAMPLING_RATE))
-    steps.append(partial(crop_or_pad, length=cfg.ECG.LENGTH))
-    if cfg.ECG.STANDARDISE:
-        steps.append(partial(standardise, per_channel=True))
-    return SignalPipeline(steps)
 
 
 def _source(cfg, recordings, available_leads, wanted_leads, paths=None) -> ECGArraySource:
@@ -117,17 +94,18 @@ def _source(cfg, recordings, available_leads, wanted_leads, paths=None) -> ECGAr
 
     Selection goes through the source's own ``select`` argument rather than through a
     transform, so that the source's ``leads`` keep describing what it returns -- which
-    is what makes splitting it into per-lead modalities meaningful afterwards.
+    is what makes splitting it into per-lead modalities meaningful afterwards. Every
+    preprocessing step is per lead, so no step mixes one lead into another.
 
     Deriving an absent limb lead is different: it *creates* a lead rather than choosing
     one, so it runs before the source sees the recording, and the source is then told
     it holds the derived set.
     """
-    wanted = canonical_leads(wanted_leads)
-    pipeline = signal_pipeline(cfg)
+    wanted = normalize_lead_names(wanted_leads)
+    pipeline = get_ecg_transform_from_cfg(cfg)
 
     if cfg.ECG.DERIVE_MISSING:
-        derive = lead_selector(available_leads, wanted, derive=True)
+        derive = get_lead_selector(available_leads, wanted, derive=True)
         if paths is not None:
             base_loader = _npy_loader
             return ECGFileSource(
@@ -170,7 +148,7 @@ def _lead_modalities(source: ECGArraySource, leads: Sequence[str]) -> dict[str, 
     it splits directly. This is the whole of "each lead is a modality" at the loading
     stage; nothing downstream knows the modalities happen to be leads.
     """
-    return lead_sources(source, leads=leads)
+    return get_lead_sources(source, leads=leads)
 
 
 def load_local(cfg) -> LeadCohort:
@@ -198,7 +176,7 @@ def load_local(cfg) -> LeadCohort:
         )
 
     table = pd.read_csv(table_path)
-    for column in (SUBJECT_COLUMN, endpoint_column(cfg)):
+    for column in (SUBJECT_COLUMN, get_endpoint_column(cfg)):
         if column not in table.columns:
             raise ValueError(f"{table_path} has no column {column!r}; available: {list(table.columns)}")
     table[SUBJECT_COLUMN] = table[SUBJECT_COLUMN].astype(str)
@@ -209,8 +187,8 @@ def load_local(cfg) -> LeadCohort:
             raise FileNotFoundError(f"no {directory}/ directory under {root}")
         return {path.stem: path for path in sorted(folder.glob("*.npy"))}
 
-    pretrain_leads = canonical_leads(list(cfg.ECG.LEADS))
-    finetune_leads = canonical_leads(list(cfg.ECG.FINETUNE_LEADS))
+    pretrain_leads = normalize_lead_names(list(cfg.ECG.LEADS))
+    finetune_leads = normalize_lead_names(list(cfg.ECG.FINETUNE_LEADS))
 
     pretrain_files = files("pretrain")
     finetune_files = files("finetune")
@@ -228,14 +206,14 @@ def load_synthetic(cfg) -> LeadCohort:
     The unlabelled cohort is drawn larger than the labelled one, mirroring the
     asymmetry the method exists to exploit.
     """
-    pretrain_leads = canonical_leads(list(cfg.ECG.LEADS))
-    finetune_leads = canonical_leads(list(cfg.ECG.FINETUNE_LEADS))
+    pretrain_leads = normalize_lead_names(list(cfg.ECG.LEADS))
+    finetune_leads = normalize_lead_names(list(cfg.ECG.FINETUNE_LEADS))
 
     unlabelled = make_synthetic_multimodal_data(
         num_subjects=cfg.SYNTHETIC.NUM_SUBJECTS * 2,
         leads=pretrain_leads,
         num_samples=cfg.SYNTHETIC.NUM_SAMPLES,
-        sampling_rate=source_rate(cfg),
+        sampling_rate=get_source_sampling_rate(cfg),
         with_images=False,
         seed=cfg.SOLVER.SEED,
     )
@@ -243,7 +221,7 @@ def load_synthetic(cfg) -> LeadCohort:
         num_subjects=cfg.SYNTHETIC.NUM_SUBJECTS,
         leads=pretrain_leads,
         num_samples=cfg.SYNTHETIC.NUM_SAMPLES,
-        sampling_rate=source_rate(cfg),
+        sampling_rate=get_source_sampling_rate(cfg),
         with_images=False,
         seed=cfg.SOLVER.SEED + 100,
     )
@@ -286,14 +264,12 @@ def _assemble(
     table = table[table[SUBJECT_COLUMN].isin(available)].reset_index(drop=True)
     if table.empty:
         raise ValueError("no labelled subject survived the join between the cohort table and the recordings")
-
     table = derive_endpoint(cfg, table)
-    columns = {"value": "value"} if cfg.ENDPOINT.REGRESSION else {"label": "label"}
 
     return LeadCohort(
         pretrain_sources=_lead_modalities(pretrain, pretrain_leads),
         finetune_sources=_lead_modalities(finetune, finetune_leads),
-        target=ColumnTarget(table, columns=columns, id_column=SUBJECT_COLUMN),
+        target=get_endpoint_target(cfg, table, SUBJECT_COLUMN),
         pretrain_ids=list(pretrain_ids),
         labelled_ids=list(table[SUBJECT_COLUMN]),
         table=table,
@@ -303,99 +279,6 @@ def _assemble(
         synthetic=synthetic,
         num_classes=int(cfg.ENDPOINT.NUM_CLASSES),
     )
-
-
-def check_endpoint(cfg) -> None:
-    """Reject an endpoint that cannot be built, before any data is read.
-
-    Raises:
-        ValueError: If the class count, where the class is read from and the task
-            disagree, naming the setting to change.
-    """
-    num_classes = int(cfg.ENDPOINT.NUM_CLASSES)
-    if num_classes < 2:
-        raise ValueError(f"ENDPOINT.NUM_CLASSES must be at least 2, got {num_classes}")
-    if cfg.ENDPOINT.REGRESSION:
-        if cfg.ENDPOINT.LABEL_COLUMN or num_classes != 2:
-            raise ValueError(
-                "ENDPOINT.REGRESSION predicts ENDPOINT.VALUE_COLUMN itself and has no classes; leave "
-                "ENDPOINT.LABEL_COLUMN empty and ENDPOINT.NUM_CLASSES at 2, or set ENDPOINT.REGRESSION False"
-            )
-        return
-    if num_classes > 2 and not cfg.ENDPOINT.LABEL_COLUMN:
-        raise ValueError(
-            f"a threshold on {cfg.ENDPOINT.VALUE_COLUMN} defines two classes, not {num_classes}; set "
-            f"ENDPOINT.LABEL_COLUMN to a column of class indices 0..{num_classes - 1}"
-        )
-    if num_classes > 2 and cfg.OBJECTIVE.POS_WEIGHT > 0:
-        raise ValueError(
-            f"OBJECTIVE.POS_WEIGHT weights the positive class of a binary endpoint, and this one has {num_classes} "
-            f"classes; leave it 0 to weight every class from the training fold, or set it negative for no weighting"
-        )
-
-
-def endpoint_column(cfg) -> str:
-    """The column of the cohort table the endpoint is read from."""
-    return cfg.ENDPOINT.LABEL_COLUMN or cfg.ENDPOINT.VALUE_COLUMN
-
-
-def derive_endpoint(cfg, table: pd.DataFrame) -> pd.DataFrame:
-    """Add the ``label`` and ``value`` columns the endpoint is supervised and stratified on.
-
-    The label is a threshold on ``ENDPOINT.VALUE_COLUMN``, or is read from
-    ``ENDPOINT.LABEL_COLUMN`` where the cohort records the class directly. A subject with
-    no recorded endpoint is dropped rather than assumed negative, and the run logs how
-    many were.
-
-    Raises:
-        ValueError: If no subject has the endpoint, or a recorded class is not one of
-            ``0 .. ENDPOINT.NUM_CLASSES - 1``.
-    """
-    column = endpoint_column(cfg)
-    recorded = pd.to_numeric(table[column], errors="coerce")
-    known = recorded.notna()
-    if not bool(known.all()):
-        logger.info("dropping %d subjects with no recorded %s", int((~known).sum()), column)
-        table = table[known].reset_index(drop=True)
-        recorded = recorded[known].reset_index(drop=True)
-    if table.empty:
-        raise ValueError(f"no subject has a recorded {column}, so there is no endpoint to fine-tune on")
-
-    table = table.copy()
-    if not cfg.ENDPOINT.LABEL_COLUMN:
-        table["value"] = recorded.astype(float)
-        table["label"] = (recorded > cfg.ENDPOINT.THRESHOLD).astype(int)
-        return table
-
-    num_classes = int(cfg.ENDPOINT.NUM_CLASSES)
-    invalid = sorted(set(recorded[(recorded % 1 != 0) | (recorded < 0) | (recorded >= num_classes)].tolist()))
-    if invalid:
-        raise ValueError(
-            f"{column} records {invalid[:5]}, which are not class indices 0..{num_classes - 1}; encode the classes "
-            f"as integers from 0, or set ENDPOINT.NUM_CLASSES to how many there are"
-        )
-    table["label"] = recorded.astype(int)
-    # The measurement, where the table has it, is kept for the record; it does not
-    # supervise a classification read from a column.
-    if cfg.ENDPOINT.VALUE_COLUMN in table:
-        table["value"] = pd.to_numeric(table[cfg.ENDPOINT.VALUE_COLUMN], errors="coerce").astype(float)
-    return table
-
-
-def class_balance(table: pd.DataFrame, num_classes: int) -> dict:
-    """How the labelled subjects divide between the classes, for a record or a log line."""
-    labels = table["label"].to_numpy(dtype=int)
-    if num_classes > 2:
-        return {"class_counts": np.bincount(labels, minlength=num_classes).tolist()}
-    return {"n_positive": int(labels.sum()), "positive_rate": float(labels.mean())}
-
-
-def _balance_text(table: pd.DataFrame, num_classes: int) -> str:
-    """The class balance as a phrase: ``"12 positive"`` or ``"classes 8/8/8"``."""
-    balance = class_balance(table, num_classes)
-    if "class_counts" in balance:
-        return "classes " + "/".join(str(count) for count in balance["class_counts"])
-    return f"{balance['n_positive']} positive"
 
 
 def load_cohort(cfg) -> LeadCohort:
@@ -410,14 +293,14 @@ def load_cohort(cfg) -> LeadCohort:
     return load_synthetic(cfg)
 
 
-def summarise(cohort: LeadCohort, endpoint: str) -> dict:
+def summarize_cohort(cohort: LeadCohort, endpoint: str) -> dict:
     """A record of what the cohorts were, for the run's output directory."""
     return {
         "endpoint": endpoint,
         "synthetic": cohort.synthetic,
         "n_pretrain": len(cohort.pretrain_ids),
         "n_labelled": len(cohort.labelled_ids),
-        **class_balance(cohort.table, cohort.num_classes),
+        **get_class_balance(cohort.table, cohort.num_classes),
         "pretrain_leads": list(cohort.pretrain_leads),
         "finetune_leads": list(cohort.finetune_leads),
         "samples_per_lead": cohort.length,

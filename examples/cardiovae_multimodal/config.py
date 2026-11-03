@@ -38,18 +38,26 @@ def get_cfg_defaults() -> CfgNode:
     # multimodal numbers are commensurable. Without this the ECG arm would be scored on
     # a larger cohort and the comparison would mean nothing.
     cfg.DATASET.REQUIRE_MODALITIES = [CXR]
+    # Cross-validation: a cohort of a few hundred subjects leaves too few positives in a
+    # single held-out split to separate one model from another.
     cfg.DATASET.SPLIT_MODE = "cv"
     cfg.DATASET.NUM_FOLDS = 10
     cfg.DATASET.STRATIFY_KEYS = ["label"]
 
     # ---------------------------------------------------------------- modalities
+    # The leads each recording file stores, in the order it stores them. This is
+    # MIMIC-IV-ECG's order, in which the published model's pretraining recordings were
+    # read: aVF before aVL, unlike the clinical convention. A cohort exported in another
+    # order must say so here, or every lead named afterwards is the wrong one.
+    cfg.ECG.LEADS = ["I", "II", "III", "aVR", "aVF", "aVL", "V1", "V2", "V3", "V4", "V5", "V6"]
     # A ten-second twelve-lead recording at 500 Hz, flattened into one channel. The
-    # reference implementation encodes the leads concatenated end to end rather than as
-    # channels, which is what NUM_CHANNELS 1 below gives.
+    # reference implementation interleaves the leads sample by sample -- it reads a
+    # (samples, leads) recording and flattens it row by row -- which is what
+    # NUM_CHANNELS 1 below gives, and what the published checkpoint expects.
     cfg.ECG.LENGTH = 60000
     cfg.ECG.SAMPLING_RATE = 500
-    cfg.ECG.STANDARDISE = True
-    # Channels the recording is presented with. 1 flattens every lead into one long
+    cfg.ECG.NORMALIZE = True
+    # Channels the recording is presented with. 1 interleaves every lead into one long
     # signal, as the paper does; 12 encodes the leads as channels, which is the more
     # natural reading and costs nothing to try.
     cfg.ECG.NUM_CHANNELS = 1
@@ -86,24 +94,13 @@ def get_cfg_defaults() -> CfgNode:
     cfg.OBJECTIVE.ALIGNMENT_WEIGHT = 0.0
 
     # ---------------------------------------------------------------- endpoint
-    cfg.ENDPOINT = CfgNode()
     cfg.ENDPOINT.NAME = ENDPOINTS[0]
     # The column the cohort's table records the measurement in, and the threshold above
-    # which the endpoint is positive. Both are this dataset's, which is why they are
-    # here and not in the package schema.
+    # which the endpoint is positive. Both are this dataset's, which is why they are set
+    # here; the package schema declares the keys and names nothing.
     cfg.ENDPOINT.VALUE_COLUMN = "mpap_mmhg"
     cfg.ENDPOINT.THRESHOLD = 20.0
     cfg.ENDPOINT.UNIT = "mmHg"
-    # Predict the measurement itself rather than the threshold applied to it. Keeps the
-    # information the threshold throws away, and is a RegressionTask instead.
-    cfg.ENDPOINT.REGRESSION = False
-    # Classes the endpoint has. A threshold defines two; more need LABEL_COLUMN, a column
-    # of class indices 0..NUM_CLASSES-1 that the cohort's table records directly -- a
-    # haemodynamic subtype, say, which takes more than one measurement to define.
-    cfg.ENDPOINT.NUM_CLASSES = 2
-    # Read the class from this column instead of thresholding VALUE_COLUMN. Empty keeps
-    # the threshold.
-    cfg.ENDPOINT.LABEL_COLUMN = ""
 
     # ---------------------------------------------------------------- run
     cfg.SOLVER.SEED = 2026
@@ -112,9 +109,7 @@ def get_cfg_defaults() -> CfgNode:
     cfg.SOLVER.BATCH_SIZE = 128
     cfg.SOLVER.OPTIMIZER = "Adam"
 
-    # Epochs of supervised fine-tuning, which is a shorter run than pretraining on a
-    # far smaller cohort.
-    cfg.FINETUNE = CfgNode()
+    # The published fine-tuning schedule.
     cfg.FINETUNE.MAX_EPOCHS = 50
     cfg.FINETUNE.BASE_LR = 1e-3
     cfg.FINETUNE.BATCH_SIZE = 32

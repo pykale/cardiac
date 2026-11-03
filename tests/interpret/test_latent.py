@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 from torch import nn
 
-from kalecardiac.interpret import collect_latents, latent_embedding
+from kalecardiac.interpret import collect_latents, project_latents
 from kalecardiac.model.embed import LSEMVAE
 
 LATENT = 6
@@ -62,35 +62,35 @@ class TestLatentEmbedding:
         return np.random.default_rng(0).normal(size=(40, LATENT))
 
     def test_pca_projects_to_the_requested_dimensions(self, features):
-        assert latent_embedding(features, method="pca").shape == (40, 2)
-        assert latent_embedding(features, method="pca", n_components=3).shape == (40, 3)
+        assert project_latents(features, method="pca").shape == (40, 2)
+        assert project_latents(features, method="pca", n_components=3).shape == (40, 3)
 
     def test_pca_is_deterministic(self, features):
-        first = latent_embedding(features, method="pca")
-        second = latent_embedding(features, method="pca")
+        first = project_latents(features, method="pca")
+        second = project_latents(features, method="pca")
         assert np.allclose(first, second)
 
     def test_fitting_on_a_subset_still_transforms_everything(self, features):
-        coordinates = latent_embedding(features, method="pca", fit_on=features[:20])
+        coordinates = project_latents(features, method="pca", fit_on=features[:20])
         assert coordinates.shape == (40, 2)
 
     def test_umap_is_available_when_installed(self, features):
         pytest.importorskip("umap")
-        assert latent_embedding(features, method="umap").shape == (40, 2)
+        assert project_latents(features, method="umap").shape == (40, 2)
 
     def test_umap_bounds_its_neighbourhood_by_the_cohort(self, features):
         # UMAP's default of fifteen neighbours fails outright on a split smaller than
         # that, which a cardiac fold routinely is.
         pytest.importorskip("umap")
-        assert latent_embedding(features[:8], method="umap").shape == (8, 2)
+        assert project_latents(features[:8], method="umap").shape == (8, 2)
 
     def test_a_one_dimensional_input_is_rejected(self):
         with pytest.raises(ValueError, match=r"\(N, D\)"):
-            latent_embedding(np.zeros(10))
+            project_latents(np.zeros(10))
 
     def test_an_unknown_method_is_rejected(self, features):
         with pytest.raises(ValueError, match="unknown method"):
-            latent_embedding(features, method="tsne")
+            project_latents(features, method="tsne")
 
 
 def _fit(model, loader, task, epochs: int = 4, lr: float = 1e-3) -> None:

@@ -83,8 +83,8 @@ class GaussianPosterior:
         return torch.exp(0.5 * self.log_var)
 
     def sample(self, generator: torch.Generator | None = None) -> Tensor:
-        """Draw one sample with the reparameterisation trick; see :func:`reparameterise`."""
-        return reparameterise(self.mean, self.log_var, generator=generator)
+        """Draw one sample with the reparameterisation trick; see :func:`reparameterize`."""
+        return reparameterize(self.mean, self.log_var, generator=generator)
 
     def detach(self) -> GaussianPosterior:
         """A copy detached from the graph, for interpretation or logging."""
@@ -95,7 +95,7 @@ class GaussianPosterior:
         return GaussianPosterior(self.mean.to(device), self.log_var.to(device))
 
 
-def reparameterise(mean: Tensor, log_var: Tensor, generator: torch.Generator | None = None) -> Tensor:
+def reparameterize(mean: Tensor, log_var: Tensor, generator: torch.Generator | None = None) -> Tensor:
     """Sample from ``N(mean, exp(log_var))`` so that the draw is differentiable.
 
     ``z = mean + eps * std`` with ``eps ~ N(0, 1)``: the randomness is an input rather
@@ -305,7 +305,7 @@ def wasserstein_barycenter(
     return GaussianPosterior(barycentre_mean, 2.0 * torch.log(barycentre_stddev.clamp_min(EPS)))
 
 
-def expert_groups(num_experts: int, num_groups: int) -> list[list[int]]:
+def get_expert_groups(num_experts: int, num_groups: int) -> list[list[int]]:
     """Divide ``num_experts`` expert indices into ``num_groups`` contiguous groups.
 
     Every expert lands in exactly one group, and the groups differ in size by at most
@@ -377,7 +377,7 @@ def hierarchical_experts(
         ValueError: If the shapes are inconsistent, or ``num_groups`` is below one.
     """
     mask = _check(mean, log_var, mask)
-    groups = expert_groups(mean.shape[0], num_groups)
+    groups = get_expert_groups(mean.shape[0], num_groups)
 
     group_means, group_log_vars, group_present = [], [], []
     for indices in groups:

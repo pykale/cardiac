@@ -192,7 +192,10 @@ class Conv2dDecoder(nn.Module):
         self.start_size = (max(self.size[0] // upsample, 1), max(self.size[1] // upsample, 1))
         self.project = nn.Linear(self.latent_dim, self.channels[0] * self.start_size[0] * self.start_size[1])
 
-        padding = (kernel_size - stride) // 2
+        # The padding that makes each layer multiply the length by exactly ``stride``:
+        # kernel 4 gets padding 1, kernel 3 gets padding 1 and output padding 1 -- the
+        # layout PyKale's VAE decoders, and the published CardioVAE, use.
+        padding = max((kernel_size - stride + 1) // 2, 0)
         output_padding = stride - kernel_size + 2 * padding
         layers: list[nn.Module] = []
         widths = [*self.channels, self.out_channels]

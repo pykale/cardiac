@@ -133,21 +133,6 @@ class VariationalEncoder(nn.Module):
         return f"VariationalEncoder({self.backbone!r}, latent_dim={self.latent_dim})"
 
 
-def freeze(module: nn.Module, frozen: bool = True) -> nn.Module:
-    """Stop (or resume) a module accumulating gradients.
-
-    Args:
-        module: Module to freeze.
-        frozen: ``True`` freezes, ``False`` unfreezes.
-
-    Returns:
-        The same module, for chaining.
-    """
-    for parameter in module.parameters():
-        parameter.requires_grad_(not frozen)
-    return module
-
-
 class LatentEmbedder(nn.Module):
     """A pretrained variational encoder, presented as an embedder.
 
@@ -186,7 +171,8 @@ class LatentEmbedder(nn.Module):
             raise AttributeError(
                 f"{type(encoder).__name__} must expose 'latent_dim'; wrap a backbone in VariationalEncoder first"
             )
-        self.encoder = freeze(encoder, frozen)
+        # torch's own switch: requires_grad_ sets every parameter and returns the module.
+        self.encoder = encoder.requires_grad_(not frozen)
         self.frozen = frozen
         self.sample = sample
         self.out_dim = int(latent_dim)

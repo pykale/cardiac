@@ -5,7 +5,7 @@ waveform. What is left here is the part that depends on *which* channel is which
 selecting a lead subset, reordering leads into a canonical sequence, and deriving the
 augmented limb leads that a reduced-lead recorder leaves out.
 
-The lead vocabulary itself lives in :mod:`kalecardiac.loaddata.ecg_access`, beside the
+The lead vocabulary itself lives in :mod:`kalecardiac.loaddata.signal_access`, beside the
 sources that read recordings, because what a lead is called is a property of the data
 rather than of a transform.
 
@@ -13,7 +13,7 @@ rather than of a transform.
 refactors both fix a lead order as a literal list, and in one of them the list in the
 preprocessing script and the list the encoder indexes disagree -- aVL and aVF are
 transposed between them. Nothing crashes, and a per-lead model silently learns aVL's
-representation from aVF's signal. :func:`build_ecg_pipeline` exists so that the order is
+representation from aVF's signal. :func:`get_ecg_transform` exists so that the order is
 stated once, canonically, and checked.
 """
 
@@ -24,15 +24,20 @@ from functools import partial
 
 import numpy as np
 from numpy.typing import ArrayLike
+from torchvision.transforms import Compose
 
-from kalecardiac.loaddata.ecg_access import ECGFormatError, canonical_lead, canonical_leads, lead_indices
+from kalecardiac.loaddata.signal_access import (
+    ECGFormatError,
+    get_lead_indices,
+    normalize_lead_name,
+    normalize_lead_names,
+)
 from kalecardiac.prepdata.signal_transform import (
-    SignalPipeline,
-    crop_or_pad,
-    interpolate_missing,
-    resample,
-    scale_amplitude,
-    standardise,
+    crop_or_pad_signal,
+    interpolate_signal,
+    normalize_signal,
+    resample_signal,
+    scale_signal,
 )
 
 #: The augmented limb leads, and how each is derived from leads I and II by Einthoven's
@@ -70,7 +75,7 @@ def select_leads(signal: ArrayLike, available: Sequence[str], wanted: Sequence[s
         raise ECGFormatError(
             f"recording of shape {array.shape} does not match the {len(available)} declared leads {list(available)}"
         )
-    return np.ascontiguousarray(array[lead_indices(available, wanted)])
+    return np.ascontiguousarray(array[get_lead_indices(available, wanted)])
 
 
 def derive_limb_leads(signal: ArrayLike, available: Sequence[str], wanted: Sequence[str]) -> np.ndarray:
@@ -98,8 +103,8 @@ def derive_limb_leads(signal: ArrayLike, available: Sequence[str], wanted: Seque
             derivation is needed and I and II are not both present.
     """
     array = np.asarray(signal, dtype=np.float32)
-    present = canonical_leads(available)
-    chosen = canonical_leads(wanted)
+    present = normalize_lead_names(available)
+    chosen = normalize_lead_names(wanted)
     if array.ndim != 2 or array.shape[0] != len(present):
         raise ECGFormatError(f"recording of shape {array.shape} does not match the {len(present)} declared leads")
 
@@ -121,14 +126,14 @@ def derive_limb_leads(signal: ArrayLike, available: Sequence[str], wanted: Seque
     return np.ascontiguousarray(np.vstack([rows[lead] for lead in chosen]), dtype=np.float32)
 
 
-def build_ecg_pipeline(
+def get_ecg_transform(
     length: int,
     sampling_rate: float = 500.0,
     source_sampling_rate: float | None = None,
-    standardise_leads: bool = True,
+    normalize_leads: bool = True,
     amplitude_scale: float | None = None,
-    centre_crop: bool = False,
-) -> SignalPipeline:
+    center_crop: bool = False,
+) -> Compose:
     """Assemble the preprocessing both cardiac use cases apply, in the order they apply it.
 
     Interpolate dropped samples, resample if the cohort was recorded at another rate,
@@ -142,44 +147,45 @@ def build_ecg_pipeline(
         sampling_rate: Rate to produce, in hertz.
         source_sampling_rate: Rate the recordings arrive at. ``None`` or equal to
             ``sampling_rate`` skips resampling.
-        standardise_leads: Zero mean and unit variance per lead. What both cardiac use
-            cases apply; see :func:`~kalecardiac.prepdata.standardise` for what it costs.
-        amplitude_scale: Divide by this constant instead of standardising, keeping
+        normalize_leads: Zero mean and unit variance per lead. What both cardiac use
+            cases apply; see :func:`~kalecardiac.prepdata.normalize_signal` for what it costs.
+        amplitude_scale: Divide by this constant instead of normalizing, keeping
             absolute amplitude meaningful. Mutually exclusive with
-            ``standardise_leads``.
-        centre_crop: Take the middle of a long recording rather than its start.
+            ``normalize_leads``.
+        center_crop: Take the middle of a long recording rather than its start.
 
     Returns:
-        A pipeline to hand to an ECG source's ``transform``.
+        A :class:`torchvision.transforms.Compose` of the steps, to hand to an ECG
+        source's ``transform``.
 
     Raises:
         ValueError: If both or neither normalisation is requested.
     """
-    if standardise_leads and amplitude_scale is not None:
+    if normalize_leads and amplitude_scale is not None:
         raise ValueError(
-            "choose one of standardise_leads and amplitude_scale: standardising discards the absolute "
+            "choose one of normalize_leads and amplitude_scale: normalizing discards the absolute "
             "amplitude that scaling exists to preserve"
         )
 
-    steps: list[Callable[[np.ndarray], np.ndarray]] = [interpolate_missing]
+    steps: list[Callable[[np.ndarray], np.ndarray]] = [interpolate_signal]
     if source_sampling_rate is not None and source_sampling_rate != sampling_rate:
-        steps.append(partial(resample, source_rate=source_sampling_rate, target_rate=sampling_rate))
-    steps.append(partial(crop_or_pad, length=length, centre=centre_crop))
+        steps.append(partial(resample_signal, source_rate=source_sampling_rate, target_rate=sampling_rate))
+    steps.append(partial(crop_or_pad_signal, length=length, center=center_crop))
 
-    if standardise_leads:
-        steps.append(standardise)
+    if normalize_leads:
+        steps.append(normalize_signal)
     elif amplitude_scale is not None:
-        steps.append(partial(scale_amplitude, scale=amplitude_scale))
+        steps.append(partial(scale_signal, scale=amplitude_scale))
     else:
         raise ValueError(
-            "no normalisation requested; pass standardise_leads=True, or amplitude_scale to keep absolute "
+            "no normalisation requested; pass normalize_leads=True, or amplitude_scale to keep absolute "
             "amplitude, and state the choice rather than leaving raw units to the optimiser"
         )
-    return SignalPipeline(steps)
+    return Compose(steps)
 
 
-def lead_selector(available: Sequence[str], wanted: Sequence[str], derive: bool = False) -> Callable:
-    """A one-argument callable that selects leads, for use inside a pipeline.
+def get_lead_selector(available: Sequence[str], wanted: Sequence[str], derive: bool = False) -> Callable:
+    """A one-argument callable that selects leads, for use as a transform step.
 
     Args:
         available: Lead names in the order the recording stores them.
@@ -189,22 +195,23 @@ def lead_selector(available: Sequence[str], wanted: Sequence[str], derive: bool 
     Returns:
         A callable taking a recording and returning the selected leads.
     """
-    chosen = canonical_leads(wanted)
+    chosen = normalize_lead_names(wanted)
     function = derive_limb_leads if derive else select_leads
 
     def select(signal: np.ndarray) -> np.ndarray:
         return function(signal, available, chosen)
 
-    select.__name__ = f"select_leads({', '.join(chosen)})"
+    # Named for what it does, so a Compose of steps reads as one in a log.
+    select.__name__ = select.__qualname__ = f"select_leads({', '.join(chosen)})"
     return select
 
 
 __all__ = [
     "DERIVABLE_LIMB_LEADS",
-    "build_ecg_pipeline",
-    "canonical_lead",
-    "canonical_leads",
+    "get_ecg_transform",
+    "normalize_lead_name",
+    "normalize_lead_names",
     "derive_limb_leads",
-    "lead_selector",
+    "get_lead_selector",
     "select_leads",
 ]

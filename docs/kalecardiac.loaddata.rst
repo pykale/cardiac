@@ -7,7 +7,7 @@ Load data: ``kalecardiac.loaddata``
 kalecardiac.loaddata.ecg\_access
 --------------------------------
 
-.. automodule:: kalecardiac.loaddata.ecg_access
+.. automodule:: kalecardiac.loaddata.signal_access
    :members:
    :show-inheritance:
 

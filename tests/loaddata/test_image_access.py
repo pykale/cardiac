@@ -6,32 +6,32 @@ import numpy as np
 import pytest
 import torch
 
-from kalecardiac.loaddata import ImageArraySource, ImageFileSource, ImageFormatError, as_image_array
+from kalecardiac.loaddata import ImageArraySource, ImageFileSource, ImageFormatError, check_image_array
 
 
 class TestImageArrayCoercion:
     def test_adds_a_channel_axis_to_a_flat_image(self):
-        assert as_image_array(np.zeros((16, 20)), channels=1).shape == (1, 16, 20)
+        assert check_image_array(np.zeros((16, 20)), channels=1).shape == (1, 16, 20)
 
     def test_rejects_a_flat_image_when_several_channels_are_declared(self):
         with pytest.raises(ImageFormatError, match="2-D image has one channel"):
-            as_image_array(np.zeros((16, 20)), channels=3)
+            check_image_array(np.zeros((16, 20)), channels=3)
 
     def test_moves_a_trailing_channel_axis_to_the_front(self):
-        assert as_image_array(np.zeros((16, 20, 3)), channels=3).shape == (3, 16, 20)
+        assert check_image_array(np.zeros((16, 20, 3)), channels=3).shape == (3, 16, 20)
 
     def test_leaves_a_leading_channel_axis_alone(self):
-        assert as_image_array(np.zeros((3, 16, 20)), channels=3).shape == (3, 16, 20)
+        assert check_image_array(np.zeros((3, 16, 20)), channels=3).shape == (3, 16, 20)
 
     def test_rejects_a_shape_with_no_matching_axis(self):
         with pytest.raises(ImageFormatError, match="no axis of length"):
-            as_image_array(np.zeros((4, 16, 20)), channels=3)
+            check_image_array(np.zeros((4, 16, 20)), channels=3)
 
     def test_rejects_a_four_dimensional_volume(self):
         # A cine stack is a different contract; half-supporting it here would make this
         # wrong for both.
         with pytest.raises(ImageFormatError, match="2-D or 3-D"):
-            as_image_array(np.zeros((8, 1, 16, 20)), channels=1)
+            check_image_array(np.zeros((8, 1, 16, 20)), channels=1)
 
 
 class TestImageArraySource:

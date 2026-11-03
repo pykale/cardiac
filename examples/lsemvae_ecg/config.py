@@ -45,7 +45,7 @@ def get_cfg_defaults() -> CfgNode:
     cfg.ECG.LEADS = PRETRAIN_LEADS
     cfg.ECG.LENGTH = 5000
     cfg.ECG.SAMPLING_RATE = 500
-    cfg.ECG.STANDARDISE = True
+    cfg.ECG.NORMALIZE = True
     cfg.ECG.ENCODER = "conv"
 
     # Leads the downstream cohort is fine-tuned on. Naming fewer leads here than
@@ -89,20 +89,12 @@ def get_cfg_defaults() -> CfgNode:
     cfg.OBJECTIVE.UNIMODAL_STREAMS = False
 
     # ---------------------------------------------------------------- endpoint
-    cfg.ENDPOINT = CfgNode()
+    # The measurement this dataset's table records, and the threshold above which the
+    # endpoint is positive.
     cfg.ENDPOINT.NAME = ENDPOINTS[0]
     cfg.ENDPOINT.VALUE_COLUMN = "mpap_mmhg"
     cfg.ENDPOINT.THRESHOLD = 20.0
     cfg.ENDPOINT.UNIT = "mmHg"
-    # Predict the measurement itself rather than the threshold applied to it.
-    cfg.ENDPOINT.REGRESSION = False
-    # Classes the endpoint has. A threshold defines two; more need LABEL_COLUMN, a column
-    # of class indices 0..NUM_CLASSES-1 that the cohort's table records directly -- a
-    # haemodynamic subtype, say, which takes more than one measurement to define.
-    cfg.ENDPOINT.NUM_CLASSES = 2
-    # Read the class from this column instead of thresholding VALUE_COLUMN. Empty keeps
-    # the threshold.
-    cfg.ENDPOINT.LABEL_COLUMN = ""
 
     # ---------------------------------------------------------------- run
     cfg.SOLVER.SEED = 123
@@ -112,7 +104,7 @@ def get_cfg_defaults() -> CfgNode:
     cfg.SOLVER.BATCH_SIZE = 128
     cfg.SOLVER.OPTIMIZER = "AdamW"
 
-    cfg.FINETUNE = CfgNode()
+    # The published fine-tuning schedule.
     cfg.FINETUNE.MAX_EPOCHS = 50
     cfg.FINETUNE.BASE_LR = 1e-4
     cfg.FINETUNE.BATCH_SIZE = 32
@@ -135,7 +127,4 @@ def get_cfg_defaults() -> CfgNode:
 
     cfg.OUTPUT.OUT_DIR = "outputs/lsemvae_ecg"
     cfg.OUTPUT.INTERPRET = True
-    # Attribution above this normalised threshold counts towards a lead's share, which
-    # is how the per-lead importance table is produced.
-    cfg.OUTPUT.ATTRIBUTION_THRESHOLD = 0.7
     return cfg

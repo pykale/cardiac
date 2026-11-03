@@ -2,7 +2,7 @@
 
 Three access APIs, none of which knows a dataset:
 
-* :mod:`~kalecardiac.loaddata.ecg_access` -- electrocardiograms, by named lead, from
+* :mod:`~kalecardiac.loaddata.signal_access` -- electrocardiograms, by named lead, from
   memory or from one file per subject, plus the lead-splitting that turns a recording
   into a modality per lead.
 * :mod:`~kalecardiac.loaddata.image_access` -- cardiovascular images: a radiograph, a
@@ -23,21 +23,9 @@ builds loaders per fold, and their worker pools must be closed deliberately rath
 than raced against interpreter shutdown.
 """
 
-from kalecardiac.loaddata.ecg_access import (
-    LIMB_LEADS,
-    PRECORDIAL_LEADS,
-    STANDARD_12_LEAD,
-    ECGArraySource,
-    ECGFileSource,
-    ECGFormatError,
-    LeadSource,
-    as_lead_array,
-    canonical_lead,
-    canonical_leads,
-    lead_indices,
-    lead_sources,
-)
-from kalecardiac.loaddata.image_access import ImageArraySource, ImageFileSource, ImageFormatError, as_image_array
+from typing import TYPE_CHECKING
+
+from kalecardiac.loaddata.image_access import ImageArraySource, ImageFileSource, ImageFormatError, check_image_array
 from kalecardiac.loaddata.multimodal_access import (
     LABEL_KEY,
     VALUE_KEY,
@@ -52,28 +40,41 @@ from kalecardiac.loaddata.multimodal_access import (
     collate_subjects,
     release_workers,
 )
+from kalecardiac.loaddata.signal_access import (
+    LIMB_LEADS,
+    PRECORDIAL_LEADS,
+    STANDARD_12_LEAD,
+    ECGArraySource,
+    ECGFileSource,
+    ECGFormatError,
+    LeadSource,
+    check_ecg_array,
+    get_lead_indices,
+    get_lead_sources,
+    normalize_lead_name,
+    normalize_lead_names,
+)
 from kalecardiac.loaddata.splitting import (
     SPLIT_NAMES,
-    CohortSplitter,
-    CrossValidation,
-    HoldOut,
-    Predefined,
+    BaseSplitter,
+    CrossValidationSplit,
+    HoldOutSplit,
+    PredefinedSplit,
     Split,
     SplitError,
-    composite_labels,
-    subject_frame,
-    train_test_split,
+    get_stratification_labels,
 )
+from kalecardiac.utils.renames import renamed
 
 __all__ = [
     "ArraySource",
-    "CohortSplitter",
+    "BaseSplitter",
     "ColumnTarget",
-    "CrossValidation",
+    "CrossValidationSplit",
     "ECGArraySource",
     "ECGFileSource",
     "ECGFormatError",
-    "HoldOut",
+    "HoldOutSplit",
     "ImageArraySource",
     "ImageFileSource",
     "ImageFormatError",
@@ -83,7 +84,7 @@ __all__ = [
     "ModalitySource",
     "MultimodalDataset",
     "PRECORDIAL_LEADS",
-    "Predefined",
+    "PredefinedSplit",
     "SPLIT_NAMES",
     "STANDARD_12_LEAD",
     "Split",
@@ -92,20 +93,25 @@ __all__ = [
     "SubjectSample",
     "Target",
     "VALUE_KEY",
-    "as_image_array",
-    "as_lead_array",
-    "canonical_lead",
-    "canonical_leads",
+    "check_ecg_array",
+    "check_image_array",
     "check_target",
     "collate_subjects",
-    "composite_labels",
-    "lead_indices",
-    "lead_sources",
+    "get_lead_indices",
+    "get_lead_sources",
+    "get_stratification_labels",
+    "normalize_lead_name",
+    "normalize_lead_names",
     "release_workers",
-    "subject_frame",
-    "train_test_split",
 ]
 
 
 def __dir__():
     return sorted(__all__)
+
+
+if not TYPE_CHECKING:
+    # At runtime only: a module-level __getattr__ that a type checker saw would make
+    # every misspelt import type-check.
+    def __getattr__(name: str):
+        raise renamed(__name__, name)

@@ -10,10 +10,10 @@ from kalecardiac.evaluate import MetricError, multiclass_roc_auc, roc_auc
 from kalecardiac.interpret import (
     attribution_ratio,
     attribution_ratios,
-    ecg_wave_segments,
+    delineate_ecg_waves,
     modality_ablation,
     modality_attributions,
-    normalise_attribution,
+    normalize_attribution,
     progressive_ablation,
     segment_attribution_ratios,
 )
@@ -37,15 +37,15 @@ def predictor(cohort):
 
 class TestNormaliseAttribution:
     def test_rescales_to_the_unit_interval(self):
-        normalised = normalise_attribution(np.array([-3.0, 0.0, 7.0]))
+        normalised = normalize_attribution(np.array([-3.0, 0.0, 7.0]))
         assert normalised.min() == pytest.approx(0.0)
         assert normalised.max() == pytest.approx(1.0)
 
     def test_a_constant_map_becomes_zeros_rather_than_nan(self):
-        assert np.array_equal(normalise_attribution(np.full(5, 2.0)), np.zeros(5))
+        assert np.array_equal(normalize_attribution(np.full(5, 2.0)), np.zeros(5))
 
     def test_the_shape_is_preserved(self):
-        assert normalise_attribution(np.random.default_rng(0).normal(size=(2, 3, 4))).shape == (2, 3, 4)
+        assert normalize_attribution(np.random.default_rng(0).normal(size=(2, 3, 4))).shape == (2, 3, 4)
 
 
 class TestAttributionRatio:
@@ -136,26 +136,26 @@ class TestEcgWaveSegments:
     def test_finds_the_waves_of_a_beat_like_signal(self):
         neurokit = pytest.importorskip("neurokit2")
         signal = neurokit.ecg_simulate(duration=10, sampling_rate=500, heart_rate=70, random_state=0)
-        segments = ecg_wave_segments(signal, sampling_rate=500)
+        segments = delineate_ecg_waves(signal, sampling_rate=500)
         assert set(segments) == {"P", "Q", "R", "S", "T"}
         assert len(segments["R"]) > 5
 
     def test_indices_lie_inside_the_signal(self):
         neurokit = pytest.importorskip("neurokit2")
         signal = neurokit.ecg_simulate(duration=10, sampling_rate=500, heart_rate=70, random_state=0)
-        segments = ecg_wave_segments(signal, sampling_rate=500)
+        segments = delineate_ecg_waves(signal, sampling_rate=500)
         for indices in segments.values():
             assert all(0 <= index < len(signal) for index in indices)
 
     def test_a_multi_lead_recording_is_rejected(self):
         pytest.importorskip("neurokit2")
         with pytest.raises(ValueError, match="single lead"):
-            ecg_wave_segments(np.zeros((6, 500)))
+            delineate_ecg_waves(np.zeros((6, 500)))
 
     def test_a_signal_with_no_beat_is_rejected_with_the_reason(self):
         pytest.importorskip("neurokit2")
         with pytest.raises(ValueError, match="not an ECG"):
-            ecg_wave_segments(np.zeros(500), sampling_rate=500)
+            delineate_ecg_waves(np.zeros(500), sampling_rate=500)
 
 
 class TestModalityAttributions:
@@ -275,12 +275,12 @@ class TestModalityAblation:
         assert set(results) == {"full", *(f"without_{lead}" for lead in subset), *(f"drop_{lead}" for lead in subset)}
 
     def test_a_multiclass_model_is_scored_on_every_class(self, cohort, ecg_source, loader_factory):
-        from kalecardiac.loaddata import ColumnTarget, MultimodalDataset, lead_sources
+        from kalecardiac.loaddata import ColumnTarget, MultimodalDataset, get_lead_sources
 
         cuts = np.quantile([cohort.values[name] for name in cohort.subject_id], [1 / 3, 2 / 3])
         classes = {name: int(np.searchsorted(cuts, cohort.values[name])) for name in cohort.subject_id}
         dataset = MultimodalDataset(
-            cohort.subject_id, lead_sources(ecg_source), target=ColumnTarget.from_mapping({"label": classes})
+            cohort.subject_id, get_lead_sources(ecg_source), target=ColumnTarget.from_mapping({"label": classes})
         )
         vae = LSEMVAE(leads=cohort.leads, length=ecg_source.length, latent_dim=LATENT, channels=(4,))
         task = ClassificationTask(num_classes=3, hidden_dims=())
@@ -392,7 +392,7 @@ class TestRefusalsAndOmissions:
 
         monkeypatch.setattr(neurokit, "ecg_peaks", fails)
         with pytest.raises(ValueError, match="no R peak was detected \\(index 0 is out of bounds\\)"):
-            ecg_wave_segments(neurokit.ecg_simulate(duration=4, sampling_rate=250, random_state=0), sampling_rate=250)
+            delineate_ecg_waves(neurokit.ecg_simulate(duration=4, sampling_rate=250, random_state=0), sampling_rate=250)
 
     def test_waves_that_cannot_be_delineated_are_reported_with_the_reason(self, monkeypatch):
         neurokit = pytest.importorskip("neurokit2")
@@ -403,7 +403,7 @@ class TestRefusalsAndOmissions:
         monkeypatch.setattr(neurokit, "ecg_delineate", fails)
         signal = neurokit.ecg_simulate(duration=10, sampling_rate=500, heart_rate=70, random_state=0)
         with pytest.raises(ValueError, match="could not be delineated \\(wavelet failed\\)"):
-            ecg_wave_segments(signal, sampling_rate=500)
+            delineate_ecg_waves(signal, sampling_rate=500)
 
     @staticmethod
     def failing_after(calls: int):

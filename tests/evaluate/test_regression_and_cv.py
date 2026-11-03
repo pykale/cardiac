@@ -11,37 +11,10 @@ from kalecardiac.evaluate import (
     binary_metrics,
     bootstrap_ci,
     pool_folds,
-    r2_score,
     regression_metrics,
     roc_auc,
-    summarise_folds,
+    summarize_folds,
 )
-
-
-class TestR2:
-    def test_a_perfect_prediction_scores_one(self):
-        targets = np.array([1.0, 2.0, 3.0, 4.0])
-        assert r2_score(targets, targets) == pytest.approx(1.0)
-
-    def test_predicting_the_mean_scores_zero(self):
-        targets = np.array([1.0, 2.0, 3.0, 4.0])
-        assert r2_score(targets, np.full(4, targets.mean())) == pytest.approx(0.0)
-
-    def test_a_worse_than_mean_prediction_is_negative(self):
-        targets = np.array([1.0, 2.0, 3.0, 4.0])
-        assert r2_score(targets, np.array([4.0, 3.0, 2.0, 1.0])) < 0.0
-
-    def test_a_constant_target_has_no_variation_to_explain(self):
-        with pytest.raises(MetricError, match="no variation"):
-            r2_score(np.full(5, 3.0), np.arange(5.0))
-
-    def test_mismatched_lengths_are_rejected(self):
-        with pytest.raises(MetricError, match="targets and"):
-            r2_score(np.zeros(4), np.zeros(5))
-
-    def test_an_empty_cohort_is_rejected(self):
-        with pytest.raises(MetricError, match="at least one subject"):
-            r2_score(np.array([]), np.array([]))
 
 
 class TestRegressionMetrics:
@@ -66,6 +39,27 @@ class TestRegressionMetrics:
         summary = regression_metrics(targets, predictions)
         assert summary["rmse"] > summary["mae"]
 
+    def test_each_metric_is_scikit_learns(self):
+        from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+
+        targets, predictions = np.array([10.0, 20.0, 30.0, 45.0]), np.array([12.0, 18.0, 33.0, 40.0])
+        summary = regression_metrics(targets, predictions)
+        assert summary["rmse"] == pytest.approx(np.sqrt(mean_squared_error(targets, predictions)))
+        assert summary["mae"] == pytest.approx(mean_absolute_error(targets, predictions))
+        assert summary["r2"] == pytest.approx(r2_score(targets, predictions))
+
+    def test_r_squared_is_reported_missing_when_the_targets_do_not_vary(self):
+        # scikit-learn reports 0 or 1 there, which a results table would show as a result.
+        assert regression_metrics(np.full(4, 3.0), np.arange(4.0))["r2"] is None
+
+    def test_mismatched_lengths_are_rejected(self):
+        with pytest.raises(MetricError, match="targets and"):
+            regression_metrics(np.zeros(4), np.zeros(5))
+
+    def test_an_empty_cohort_is_rejected(self):
+        with pytest.raises(MetricError, match="at least one subject"):
+            regression_metrics(np.array([]), np.array([]))
+
     def test_the_unit_is_a_label_and_changes_nothing(self):
         targets = np.array([10.0, 20.0])
         plain = regression_metrics(targets, targets + 1)
@@ -87,26 +81,26 @@ class TestSummariseFolds:
         return [binary_metrics(labels, scores + generator.normal(size=len(scores)) * 0.3) for _ in range(5)]
 
     def test_reports_a_mean_and_spread_per_metric(self, folds):
-        summary = summarise_folds(folds)
+        summary = summarize_folds(folds)
         assert summary["n_folds"] == 5
         assert set(summary["roc_auc"]) == {"mean", "std", "values"}
         assert len(summary["roc_auc"]["values"]) == 5
 
     def test_the_mean_matches_the_values(self, folds):
-        summary = summarise_folds(folds)
+        summary = summarize_folds(folds)
         assert summary["roc_auc"]["mean"] == pytest.approx(float(np.mean(summary["roc_auc"]["values"])))
 
     def test_non_numeric_keys_are_skipped_without_being_listed(self, folds):
         # The confusion matrix is a nested dict and has no mean.
-        assert "confusion" not in summarise_folds(folds)
+        assert "confusion" not in summarize_folds(folds)
 
     def test_named_keys_are_honoured(self, folds):
-        summary = summarise_folds(folds, keys=["roc_auc"])
+        summary = summarize_folds(folds, keys=["roc_auc"])
         assert set(summary) == {"n_folds", "roc_auc"}
 
     def test_no_fold_is_rejected(self):
         with pytest.raises(MetricError, match="at least one fold"):
-            summarise_folds([])
+            summarize_folds([])
 
 
 class TestBootstrapCi:
@@ -184,6 +178,6 @@ class TestPoolFolds:
 
 class TestSummariseFoldsWithNamedKeys:
     def test_a_named_metric_no_fold_reports_is_left_out_rather_than_invented(self):
-        summary = summarise_folds([{"roc_auc": 0.7}, {"roc_auc": 0.8}], keys=["roc_auc", "roc_auc_ovr"])
+        summary = summarize_folds([{"roc_auc": 0.7}, {"roc_auc": 0.8}], keys=["roc_auc", "roc_auc_ovr"])
         assert summary["roc_auc"]["mean"] == pytest.approx(0.75)
         assert "roc_auc_ovr" not in summary

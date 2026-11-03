@@ -7,7 +7,7 @@ import pytest
 import pytorch_lightning as pl
 import torch
 
-from kalecardiac.loaddata import MultimodalDataset, lead_sources
+from kalecardiac.loaddata import MultimodalDataset, get_lead_sources
 from kalecardiac.model.embed import LSEMVAE, MultimodalPredictor
 from kalecardiac.pipeline import CardiacTrainer, ClassificationTask, ReconstructionTask, RegressionTask
 
@@ -85,7 +85,7 @@ class TestPretraining:
 
     def test_it_needs_no_labels(self, cohort, ecg_source, loader_factory):
         # The whole point of pretraining: a cohort with no endpoint can still train.
-        unlabelled = MultimodalDataset(cohort.subject_id, lead_sources(ecg_source))
+        unlabelled = MultimodalDataset(cohort.subject_id, get_lead_sources(ecg_source))
         model = CardiacTrainer(
             LSEMVAE(leads=cohort.leads, length=ecg_source.length, latent_dim=LATENT, channels=(4,)),
             ReconstructionTask(scale_factor=1e-3),
@@ -115,7 +115,7 @@ class TestFineTuning:
 
     @pytest.fixture
     def subset_loader(self, cohort, ecg_source, label_target, loader_factory):
-        sources = {lead: source for lead, source in lead_sources(ecg_source).items() if lead in ("I", "II", "aVF")}
+        sources = {lead: source for lead, source in get_lead_sources(ecg_source).items() if lead in ("I", "II", "aVF")}
         return loader_factory(MultimodalDataset(cohort.subject_id, sources, target=label_target), batch_size=8)
 
     def test_a_classification_run_completes(self, predictor_trainer, subset_loader):
@@ -156,7 +156,7 @@ class TestFineTuning:
 
         task = RegressionTask(hidden_dims=())
         predictor = MultimodalPredictor(vae.latent_embedders(["I", "II"]), task.build_head)
-        sources = {lead: source for lead, source in lead_sources(ecg_source).items() if lead in ("I", "II")}
+        sources = {lead: source for lead, source in get_lead_sources(ecg_source).items() if lead in ("I", "II")}
         dataset = MultimodalDataset(
             cohort.subject_id, sources, target=ColumnTarget.from_mapping({"value": cohort.values})
         )
@@ -176,7 +176,7 @@ class TestMulticlass:
         # class present in a 40-subject cohort.
         cuts = np.quantile([cohort.values[name] for name in cohort.subject_id], [1 / 3, 2 / 3])
         classes = {name: int(np.searchsorted(cuts, cohort.values[name])) for name in cohort.subject_id}
-        sources = {lead: source for lead, source in lead_sources(ecg_source).items() if lead in ("I", "II")}
+        sources = {lead: source for lead, source in get_lead_sources(ecg_source).items() if lead in ("I", "II")}
         dataset = MultimodalDataset(cohort.subject_id, sources, target=ColumnTarget.from_mapping({"label": classes}))
         return loader_factory(dataset, batch_size=8)
 
@@ -258,7 +258,7 @@ class TestEvaluationLoops:
 
     @pytest.fixture
     def two_lead_loader(self, cohort, ecg_source, label_target, loader_factory):
-        sources = {lead: source for lead, source in lead_sources(ecg_source).items() if lead in ("I", "II")}
+        sources = {lead: source for lead, source in get_lead_sources(ecg_source).items() if lead in ("I", "II")}
         return loader_factory(MultimodalDataset(cohort.subject_id, sources, target=label_target), batch_size=8)
 
     def test_the_test_loop_logs_the_task_metric_over_the_whole_split(self, classifier, two_lead_loader):
@@ -273,7 +273,7 @@ class TestEvaluationLoops:
         from kalecardiac.loaddata import ColumnTarget
 
         negatives = ColumnTarget.from_mapping({"label": {name: 0 for name in cohort.subject_id}})
-        sources = {lead: source for lead, source in lead_sources(ecg_source).items() if lead in ("I", "II")}
+        sources = {lead: source for lead, source in get_lead_sources(ecg_source).items() if lead in ("I", "II")}
         one_class = loader_factory(MultimodalDataset(cohort.subject_id, sources, target=negatives), batch_size=8)
 
         trainer = lightning_trainer()
