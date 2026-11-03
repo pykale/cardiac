@@ -99,7 +99,11 @@ be a constructor argument, it is one.
 ```
 loaddata/
 ├── signal_access.py      ECGArraySource, ECGFileSource, LeadSource, get_lead_sources, the lead vocabulary
+<<<<<<< HEAD
 ├── image_access.py       ImageArraySource, ImageFileSource, and reading DICOM through PyKale's reader
+=======
+├── image_access.py       ImageArraySource, ImageFileSource
+>>>>>>> ad59998c08bbc42197e20661ea2a6d3cb2d2657a
 ├── multimodal_access.py  MultimodalDataset, ModalitySource, ColumnTarget, the record types
 └── splitting.py          HoldOutSplit, CrossValidationSplit, PredefinedSplit -- scikit-learn's shape
 ```

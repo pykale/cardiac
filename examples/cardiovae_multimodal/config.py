@@ -64,8 +64,14 @@ def get_cfg_defaults() -> CfgNode:
     cfg.ECG.LENGTH = 60000
     cfg.ECG.SAMPLING_RATE = 500
     cfg.ECG.NORMALIZE = True
+<<<<<<< HEAD
     # 1 interleaves every lead into one long signal, as the paper does; 0 encodes the
     # leads as channels, which is the more natural reading and costs nothing to try.
+=======
+    # Channels the recording is presented with. 1 interleaves every lead into one long
+    # signal, as the paper does; 12 encodes the leads as channels, which is the more
+    # natural reading and costs nothing to try.
+>>>>>>> ad59998c08bbc42197e20661ea2a6d3cb2d2657a
     cfg.ECG.NUM_CHANNELS = 1
 
     cfg.IMAGE.SIZE = [224, 224]

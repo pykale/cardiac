@@ -21,6 +21,7 @@ Notable changes to KaleCardiac. The format follows
   `OUTPUT.ATTRIBUTION_THRESHOLD` and `OUTPUT.ATTRIBUTION_STEPS` replace values both
   examples hardcoded, at the same values.
 - `evaluate.flatten_fold_summary`, a fold summary as one row of a results table.
+<<<<<<< HEAD
 - **A tutorial notebook**, `tutorials/cardiac-abnormality-assessment/tutorial-CardioVAE.ipynb`,
   whose pretraining and fine-tuning configurations are the CardioVAE example's
   `configs/tutorial_pretrain.yaml` and `configs/tutorial_finetune.yaml`: paired
@@ -45,6 +46,11 @@ Notable changes to KaleCardiac. The format follows
   `ECG.NUM_CHANNELS` is a key of the package schema, read by
   `get_ecg_transform_from_cfg`, so the CardioVAE example and the tutorial interleave
   the same way; the example's own copy of the step is gone.
+=======
+- **A tutorial notebook**, `tutorials/cardiac_abnormality_assessment.ipynb`: PyKale's
+  cardiothoracic abnormality tutorial, step for step on the same data, with the
+  KaleCardiac API. It runs on synthetic stand-ins without the data, and a test runs it.
+>>>>>>> ad59998c08bbc42197e20661ea2a6d3cb2d2657a
 - **The published CardioVAE weights load.** `CardioVAE.load_pykale_state_dict` reads a
   checkpoint saved from PyKale's `SignalImageVAE` or the reference implementation,
   through `remap_pykale_state_dict` and PyKale's own `remap_state_dict_keys`. Loaded
@@ -148,11 +154,14 @@ Notable changes to KaleCardiac. The format follows
 
 ### Fixed
 
+<<<<<<< HEAD
 - Pretraining wrote a full Lightning checkpoint — the model and its optimizer state,
   2.4 GB for the tutorial's CardioVAE — after every epoch, which nothing read: the
   weights are saved as `pretrained.pt`. A run with nothing to monitor now keeps no
   checkpoint, and the tutorial's ten pretraining epochs take 34 s on one GPU rather
   than 342 s.
+=======
+>>>>>>> ad59998c08bbc42197e20661ea2a6d3cb2d2657a
 - **Cross-validation folds were not stratified.** With `group_by` set,
   `CrossValidationSplit` used scikit-learn's `StratifiedGroupKFold(shuffle=True)`, which
   shuffles each group's class counts without shuffling which group they belong to: the

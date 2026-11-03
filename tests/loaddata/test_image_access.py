@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 import torch
 
+<<<<<<< HEAD
 from kalecardiac.loaddata import (
     STANDARD_12_LEAD,
     ImageArraySource,
@@ -19,6 +20,9 @@ from kalecardiac.loaddata import (
     read_dicom_image,
 )
 from kalecardiac.prepdata import get_image_transform
+=======
+from kalecardiac.loaddata import ImageArraySource, ImageFileSource, ImageFormatError, check_image_array
+>>>>>>> ad59998c08bbc42197e20661ea2a6d3cb2d2657a
 
 
 class TestImageArrayCoercion:

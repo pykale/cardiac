@@ -21,7 +21,10 @@ from kalecardiac.loaddata import (
     get_lead_sources,
     normalize_lead_name,
     normalize_lead_names,
+<<<<<<< HEAD
     read_dicom_ecg,
+=======
+>>>>>>> ad59998c08bbc42197e20661ea2a6d3cb2d2657a
 )
 
 
@@ -36,6 +39,7 @@ class TestLeadNaming:
         # A cohort may record a lead this package has never heard of; only the export
         # prefix is stripped.
         assert normalize_lead_name("LEAD_X7") == "X7"
+<<<<<<< HEAD
 
     def test_dicom_code_meanings_canonicalise(self):
         names = ["Lead I (Einthoven)", "Lead II", "Lead III", "Lead aVL", "Lead aVF", "Lead V6"]
@@ -46,6 +50,8 @@ class TestLeadNaming:
 
     def test_a_bare_prefix_is_not_stripped_to_nothing(self):
         assert normalize_lead_name("Lead") == "Lead"
+=======
+>>>>>>> ad59998c08bbc42197e20661ea2a6d3cb2d2657a
 
     def test_standard_order_is_limb_then_precordial(self):
         assert STANDARD_12_LEAD == LIMB_LEADS + PRECORDIAL_LEADS

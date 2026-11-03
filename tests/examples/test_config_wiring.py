@@ -44,7 +44,11 @@ class TestSourceSamplingRate:
             tmp_path,
             **{"ECG.SOURCE_SAMPLING_RATE": 250, "ECG.NORMALIZE": False, "ECG.LENGTH": SIX * SAMPLES * 2},
         )
+<<<<<<< HEAD
         pipeline = get_ecg_transform_from_cfg(cfg, num_leads=SIX)
+=======
+        pipeline = cardiovae_data.ecg_pipeline(cfg, flatten=True, num_leads=SIX)
+>>>>>>> ad59998c08bbc42197e20661ea2a6d3cb2d2657a
         recording = np.repeat(np.arange(SIX, dtype=np.float32)[:, None], SAMPLES, axis=1)
 
         strip = pipeline(recording)
@@ -57,7 +61,11 @@ class TestSourceSamplingRate:
         # step's leads sit together -- the layout the published checkpoint expects.
         cfg = cardiovae_cfg(tmp_path, **{"ECG.NORMALIZE": False, "ECG.LENGTH": SIX * SAMPLES})
         recording = np.arange(SIX * SAMPLES, dtype=np.float32).reshape(SIX, SAMPLES)
+<<<<<<< HEAD
         strip = get_ecg_transform_from_cfg(cfg, num_leads=SIX)(recording)
+=======
+        strip = cardiovae_data.ecg_pipeline(cfg, flatten=True, num_leads=SIX)(recording)
+>>>>>>> ad59998c08bbc42197e20661ea2a6d3cb2d2657a
         assert np.array_equal(strip[0], recording.T.reshape(-1))
         assert np.array_equal(strip[0, :SIX], recording[:, 0])
 
@@ -67,7 +75,11 @@ class TestSourceSamplingRate:
         cfg = cardiovae_cfg(tmp_path, **{"ECG.LENGTH": 2 * SAMPLES})
         generator = np.random.default_rng(0)
         recording = np.vstack([generator.normal(size=SAMPLES), 10 * generator.normal(size=SAMPLES)])
+<<<<<<< HEAD
         strip = get_ecg_transform_from_cfg(cfg, num_leads=2)(recording)
+=======
+        strip = cardiovae_data.ecg_pipeline(cfg, flatten=True, num_leads=2)(recording)
+>>>>>>> ad59998c08bbc42197e20661ea2a6d3cb2d2657a
         leads = strip[0].reshape(SAMPLES, 2).T
         assert np.allclose(leads.std(axis=1), 1.0, atol=1e-4)
 
@@ -75,24 +87,41 @@ class TestSourceSamplingRate:
         # A longer recording loses the end of every lead, never a whole lead.
         cfg = cardiovae_cfg(tmp_path, **{"ECG.NORMALIZE": False, "ECG.LENGTH": SIX * SAMPLES})
         recording = np.repeat(np.arange(SIX, dtype=np.float32)[:, None], 2 * SAMPLES, axis=1)
+<<<<<<< HEAD
         strip = get_ecg_transform_from_cfg(cfg, num_leads=SIX)(recording)
+=======
+        strip = cardiovae_data.ecg_pipeline(cfg, flatten=True, num_leads=SIX)(recording)
+>>>>>>> ad59998c08bbc42197e20661ea2a6d3cb2d2657a
         assert sorted(set(strip[0].tolist())) == list(range(SIX))
 
     def test_a_length_that_does_not_divide_among_the_leads_is_refused(self, tmp_path):
         cfg = cardiovae_cfg(tmp_path, **{"ECG.LENGTH": SIX * SAMPLES + 1})
         with pytest.raises(ValueError, match="whole number of samples"):
+<<<<<<< HEAD
             get_ecg_transform_from_cfg(cfg, num_leads=SIX)
 
     def test_cardiovae_pipeline_lists_the_steps_in_order(self, tmp_path):
         cfg = cardiovae_cfg(tmp_path, **{"ECG.SOURCE_SAMPLING_RATE": 250, "ECG.LENGTH": SIX * SAMPLES * 2})
         steps = repr(get_ecg_transform_from_cfg(cfg, num_leads=SIX))
         names = ("interpolate_signal", "resample_signal", "crop_or_pad_signal", "normalize_signal", "interleave_leads")
+=======
+            cardiovae_data.ecg_pipeline(cfg, flatten=True, num_leads=SIX)
+
+    def test_cardiovae_pipeline_lists_the_steps_in_order(self, tmp_path):
+        cfg = cardiovae_cfg(tmp_path, **{"ECG.SOURCE_SAMPLING_RATE": 250, "ECG.LENGTH": SIX * SAMPLES * 2})
+        steps = repr(cardiovae_data.ecg_pipeline(cfg, flatten=True, num_leads=SIX))
+        names = ("interpolate_signal", "resample_signal", "crop_or_pad_signal", "normalize_signal", "_interleave_leads")
+>>>>>>> ad59998c08bbc42197e20661ea2a6d3cb2d2657a
         order = [steps.index(name) for name in names]
         assert order == sorted(order), steps
 
     def test_no_resample_when_the_rates_agree(self, tmp_path):
         cfg = cardiovae_cfg(tmp_path)
+<<<<<<< HEAD
         assert "resample" not in repr(get_ecg_transform_from_cfg(cfg, num_leads=SIX))
+=======
+        assert "resample" not in repr(cardiovae_data.ecg_pipeline(cfg, flatten=True, num_leads=SIX))
+>>>>>>> ad59998c08bbc42197e20661ea2a6d3cb2d2657a
 
     def test_cardiovae_cohort_arrives_at_the_model_rate(self, tmp_path):
         cfg = cardiovae_cfg(tmp_path, **{"ECG.SOURCE_SAMPLING_RATE": 250, "ECG.LENGTH": SIX * SAMPLES * 2})

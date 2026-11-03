@@ -3,8 +3,13 @@
 Three access APIs, none of which knows a dataset:
 
 * :mod:`~kalecardiac.loaddata.signal_access` -- electrocardiograms, by named lead, from
+<<<<<<< HEAD
   memory, from one file per subject or from a folder of DICOM exports, plus the
   lead-splitting that turns a recording into a modality per lead.
+=======
+  memory or from one file per subject, plus the lead-splitting that turns a recording
+  into a modality per lead.
+>>>>>>> ad59998c08bbc42197e20661ea2a6d3cb2d2657a
 * :mod:`~kalecardiac.loaddata.image_access` -- cardiovascular images: a radiograph, a
   cardiac MRI slice, an echocardiography frame -- and the DICOM reading both share,
   through PyKale's reader.
@@ -26,6 +31,7 @@ than raced against interpreter shutdown.
 
 from typing import TYPE_CHECKING
 
+<<<<<<< HEAD
 from kalecardiac.loaddata.image_access import (
     ImageArraySource,
     ImageFileSource,
@@ -35,6 +41,9 @@ from kalecardiac.loaddata.image_access import (
     read_dicom,
     read_dicom_image,
 )
+=======
+from kalecardiac.loaddata.image_access import ImageArraySource, ImageFileSource, ImageFormatError, check_image_array
+>>>>>>> ad59998c08bbc42197e20661ea2a6d3cb2d2657a
 from kalecardiac.loaddata.multimodal_access import (
     LABEL_KEY,
     VALUE_KEY,
@@ -62,7 +71,10 @@ from kalecardiac.loaddata.signal_access import (
     get_lead_sources,
     normalize_lead_name,
     normalize_lead_names,
+<<<<<<< HEAD
     read_dicom_ecg,
+=======
+>>>>>>> ad59998c08bbc42197e20661ea2a6d3cb2d2657a
 )
 from kalecardiac.loaddata.splitting import (
     SPLIT_NAMES,
@@ -107,15 +119,21 @@ __all__ = [
     "check_image_array",
     "check_target",
     "collate_subjects",
+<<<<<<< HEAD
     "get_dicom_paths",
+=======
+>>>>>>> ad59998c08bbc42197e20661ea2a6d3cb2d2657a
     "get_lead_indices",
     "get_lead_sources",
     "get_stratification_labels",
     "normalize_lead_name",
     "normalize_lead_names",
+<<<<<<< HEAD
     "read_dicom",
     "read_dicom_ecg",
     "read_dicom_image",
+=======
+>>>>>>> ad59998c08bbc42197e20661ea2a6d3cb2d2657a
     "release_workers",
 ]
 

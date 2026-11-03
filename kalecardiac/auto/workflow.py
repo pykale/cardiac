@@ -113,6 +113,7 @@ def get_source_sampling_rate(cfg: CfgNode) -> float:
     return float(cfg.ECG.SOURCE_SAMPLING_RATE or cfg.ECG.SAMPLING_RATE)
 
 
+<<<<<<< HEAD
 def get_ecg_transform_from_cfg(cfg: CfgNode, length: int | None = None, num_leads: int | None = None) -> Compose:
     """:func:`~kalecardiac.prepdata.get_ecg_transform`, with its arguments read from ``cfg.ECG``.
 
@@ -153,13 +154,32 @@ def get_ecg_transform_from_cfg(cfg: CfgNode, length: int | None = None, num_lead
         length //= num_leads
     return get_ecg_transform(
         length=length,
+=======
+def get_ecg_transform_from_cfg(cfg: CfgNode, length: int | None = None) -> Compose:
+    """:func:`~kalecardiac.prepdata.get_ecg_transform`, with its arguments read from ``cfg.ECG``.
+
+    Args:
+        cfg: The run configuration.
+        length: Samples per lead to crop or pad to; ``ECG.LENGTH`` by default. A model
+            that reads the leads as one channel crops each lead to its share.
+
+    Returns:
+        Interpolate, resample from the source rate, crop or pad, then normalize each
+        lead -- or, with ``ECG.NORMALIZE`` off, keep the recording's own units.
+    """
+    return get_ecg_transform(
+        length=cfg.ECG.LENGTH if length is None else length,
+>>>>>>> ad59998c08bbc42197e20661ea2a6d3cb2d2657a
         sampling_rate=cfg.ECG.SAMPLING_RATE,
         source_sampling_rate=get_source_sampling_rate(cfg),
         normalize_leads=cfg.ECG.NORMALIZE,
         # get_ecg_transform wants the choice stated; NORMALIZE off states it as a scale
         # of one, which leaves the recording in its own units.
         amplitude_scale=None if cfg.ECG.NORMALIZE else 1.0,
+<<<<<<< HEAD
         interleave=interleave,
+=======
+>>>>>>> ad59998c08bbc42197e20661ea2a6d3cb2d2657a
     )
 
 
@@ -472,12 +492,16 @@ def _optimizer(cfg: CfgNode) -> dict:
 def _lightning_trainer(
     cfg: CfgNode, max_epochs: int, out_dir: Path, monitor: str | None = None, mode: str = "min"
 ) -> pl.Trainer:
+<<<<<<< HEAD
     """A Lightning trainer configured from ``SOLVER``, checkpointing on ``monitor`` if one is given.
 
     Without a ``monitor`` there is no best checkpoint to keep, so none is written: Lightning
     would otherwise save the model and its optimizer state after every epoch -- gigabytes,
     for a model the size of the published CardioVAE -- which the caller then never reads.
     """
+=======
+    """A Lightning trainer configured from ``SOLVER``, checkpointing on ``monitor`` if one is given."""
+>>>>>>> ad59998c08bbc42197e20661ea2a6d3cb2d2657a
     callbacks: list[pl.Callback] = []
     if monitor is not None:
         callbacks.append(
@@ -491,7 +515,10 @@ def _lightning_trainer(
         accelerator=cfg.SOLVER.ACCELERATOR,
         devices=cfg.SOLVER.DEVICES,
         callbacks=callbacks,
+<<<<<<< HEAD
         enable_checkpointing=monitor is not None,
+=======
+>>>>>>> ad59998c08bbc42197e20661ea2a6d3cb2d2657a
         logger=pl.loggers.CSVLogger(save_dir=str(out_dir), name="history"),
         log_every_n_steps=1,
         enable_progress_bar=False,

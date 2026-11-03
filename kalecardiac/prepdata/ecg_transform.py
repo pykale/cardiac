@@ -33,7 +33,10 @@ from kalecardiac.loaddata.signal_access import (
     normalize_lead_names,
 )
 from kalecardiac.prepdata.signal_transform import (
+<<<<<<< HEAD
     check_signal,
+=======
+>>>>>>> ad59998c08bbc42197e20661ea2a6d3cb2d2657a
     crop_or_pad_signal,
     interpolate_signal,
     normalize_signal,
@@ -127,6 +130,7 @@ def derive_limb_leads(signal: ArrayLike, available: Sequence[str], wanted: Seque
     return np.ascontiguousarray(np.vstack([rows[lead] for lead in chosen]), dtype=np.float32)
 
 
+<<<<<<< HEAD
 def interleave_leads(signal: ArrayLike) -> np.ndarray:
     """Interleave a recording's leads, sample by sample, into one channel.
 
@@ -149,6 +153,8 @@ def interleave_leads(signal: ArrayLike) -> np.ndarray:
     return np.ascontiguousarray(check_signal(signal).T).reshape(1, -1)
 
 
+=======
+>>>>>>> ad59998c08bbc42197e20661ea2a6d3cb2d2657a
 def get_ecg_transform(
     length: int,
     sampling_rate: float = 500.0,
@@ -156,7 +162,10 @@ def get_ecg_transform(
     normalize_leads: bool = True,
     amplitude_scale: float | None = None,
     center_crop: bool = False,
+<<<<<<< HEAD
     interleave: bool = False,
+=======
+>>>>>>> ad59998c08bbc42197e20661ea2a6d3cb2d2657a
 ) -> Compose:
     """Assemble the preprocessing both cardiac use cases apply, in the order they apply it.
 
@@ -177,9 +186,12 @@ def get_ecg_transform(
             absolute amplitude meaningful. Mutually exclusive with
             ``normalize_leads``.
         center_crop: Take the middle of a long recording rather than its start.
+<<<<<<< HEAD
         interleave: Finally, interleave the leads into one channel of ``length`` times
             the leads' samples, with :func:`interleave_leads`, as CardioVAE reads an ECG.
             Last, so that every step before it works on one lead at a time.
+=======
+>>>>>>> ad59998c08bbc42197e20661ea2a6d3cb2d2657a
 
     Returns:
         A :class:`torchvision.transforms.Compose` of the steps, to hand to an ECG
@@ -208,8 +220,11 @@ def get_ecg_transform(
             "no normalisation requested; pass normalize_leads=True, or amplitude_scale to keep absolute "
             "amplitude, and state the choice rather than leaving raw units to the optimiser"
         )
+<<<<<<< HEAD
     if interleave:
         steps.append(interleave_leads)
+=======
+>>>>>>> ad59998c08bbc42197e20661ea2a6d3cb2d2657a
     return Compose(steps)
 
 
@@ -242,6 +257,9 @@ __all__ = [
     "normalize_lead_names",
     "derive_limb_leads",
     "get_lead_selector",
+<<<<<<< HEAD
     "interleave_leads",
+=======
+>>>>>>> ad59998c08bbc42197e20661ea2a6d3cb2d2657a
     "select_leads",
 ]
