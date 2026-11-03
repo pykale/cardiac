@@ -124,7 +124,6 @@ class TestEcgTransform:
         transform = get_ecg_transform_from_cfg(workflow_cfg(tmp_path, **{"ECG.LENGTH": 64, "ECG.NORMALIZE": False}))
         assert np.array_equal(transform(recording), recording)
 
-<<<<<<< HEAD
     def test_one_channel_interleaves_the_leads_each_cropped_to_its_share(self, tmp_path):
         overrides = {"ECG.LEADS": list(LEADS), "ECG.LENGTH": 64, "ECG.NUM_CHANNELS": 1, "ECG.NORMALIZE": False}
         recording = np.vstack([np.full(100, 1.0), np.full(100, 2.0)])
@@ -151,8 +150,6 @@ class TestEcgTransform:
         with pytest.raises(ValueError, match="65 is not a whole number of samples for each of 2 leads"):
             get_ecg_transform_from_cfg(cfg)
 
-=======
->>>>>>> ad59998c08bbc42197e20661ea2a6d3cb2d2657a
 
 class TestLightningTrainer:
     """The trainer every stage fits with: checkpointing on the task's monitor, stopping early if asked."""
@@ -231,7 +228,6 @@ class TestPretrain:
         saved = torch.load(tmp_path / "pretrained.pt", map_location="cpu", weights_only=True)
         assert all(torch.equal(saved[key], value) for key, value in model.state_dict().items())
 
-<<<<<<< HEAD
     def test_the_weights_are_the_only_checkpoint_written(self, tmp_path, cohort):
         # Lightning's default would also save the model and its optimizer after every
         # epoch: gigabytes, for a published-size CardioVAE, that nothing reads.
@@ -239,8 +235,6 @@ class TestPretrain:
         assert [path.name for path in tmp_path.rglob("*.ckpt")] == []
         assert (tmp_path / "pretrained.pt").exists()
 
-=======
->>>>>>> ad59998c08bbc42197e20661ea2a6d3cb2d2657a
     def test_a_named_checkpoint_is_loaded_and_nothing_is_trained(self, tmp_path, cohort):
         dataset, _ = cohort
         saved = tiny_model()

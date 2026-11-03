@@ -25,10 +25,7 @@ from kalecardiac.prepdata.ecg_transform import (
     derive_limb_leads,
     get_ecg_transform,
     get_lead_selector,
-<<<<<<< HEAD
     interleave_leads,
-=======
->>>>>>> ad59998c08bbc42197e20661ea2a6d3cb2d2657a
     select_leads,
 )
 from kalecardiac.prepdata.image_transform import (
@@ -61,10 +58,7 @@ __all__ = [
     "get_ecg_transform",
     "get_image_transform",
     "get_lead_selector",
-<<<<<<< HEAD
     "interleave_leads",
-=======
->>>>>>> ad59998c08bbc42197e20661ea2a6d3cb2d2657a
     "interpolate_signal",
     "normalize_image",
     "normalize_signal",

@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 """The tutorial notebook runs top to bottom on raw DICOM files, and is stored without outputs.
 
 A notebook is documentation that executes, and documentation drifts: an API change the
@@ -7,15 +6,6 @@ order, in one namespace, as a kernel would -- skipping only the cells tagged for
 which install the package and download the dataset. The dataset is generated instead: a
 synthetic cohort written as DICOM in the tutorial's layout, so nothing is downloaded and
 nothing private is needed.
-=======
-"""The tutorial notebook runs top to bottom, and is stored without outputs.
-
-A notebook is documentation that executes, and documentation drifts: an API change the
-notebook missed would surface only when a reader ran it. This runs every code cell in
-order, in one namespace, as a kernel would -- skipping only the cells tagged for Colab.
-Without the workshop data the notebook builds synthetic stand-ins, so nothing is
-downloaded and nothing private is needed.
->>>>>>> ad59998c08bbc42197e20661ea2a6d3cb2d2657a
 """
 
 from __future__ import annotations
@@ -23,20 +13,17 @@ from __future__ import annotations
 import contextlib
 import io
 import json
-<<<<<<< HEAD
 import re
-=======
->>>>>>> ad59998c08bbc42197e20661ea2a6d3cb2d2657a
 from pathlib import Path
 
 import pytest
+import yaml
 
-<<<<<<< HEAD
-from examples.cardiovae_multimodal import config as cardiovae_config
+from kalecardiac.config import get_cfg_defaults
 
-TUTORIAL = Path(__file__).resolve().parents[1] / "tutorials" / "cardiac-abnormality-assessment"
+TUTORIAL = Path(__file__).resolve().parents[1] / "tutorials" / "mdas_tutorial"
 NOTEBOOK = TUTORIAL / "tutorial-CardioVAE.ipynb"
-CONFIGURATIONS = ("tutorial_pretrain.yaml", "tutorial_finetune.yaml")
+CONFIGS = TUTORIAL / "configs"
 
 
 def cells(kind: str = "code") -> list[dict]:
@@ -47,29 +34,40 @@ def cells(kind: str = "code") -> list[dict]:
 
 def source(cell: dict) -> str:
     return "".join(cell["source"])
-=======
-NOTEBOOK = Path(__file__).resolve().parents[1] / "tutorials" / "cardiac_abnormality_assessment.ipynb"
 
 
-def code_cells() -> list[dict]:
-    """The notebook's code cells, in order."""
-    notebook = json.loads(NOTEBOOK.read_text(encoding="utf-8"))
-    return [cell for cell in notebook["cells"] if cell["cell_type"] == "code"]
->>>>>>> ad59998c08bbc42197e20661ea2a6d3cb2d2657a
+def code() -> str:
+    return "\n".join(source(cell) for cell in cells())
 
 
 def colab_only(cell: dict) -> bool:
     return "skip-execution" in cell["metadata"].get("tags", [])
 
 
-<<<<<<< HEAD
-def test_the_configurations_are_the_cardiovae_examples():
-    # They live with the model they configure, and come with KaleCardiac rather than with
-    # the downloaded dataset; that each merges into the example is test_config's check.
-    code = "\n".join(source(cell) for cell in cells())
-    for name in CONFIGURATIONS:
-        assert (cardiovae_config.CONFIG_DIR / name).is_file()
-        assert name in code
+def test_the_configurations_beside_the_notebook_merge_onto_kalecardiacs_defaults():
+    # Colab installs the package and fetches this folder alone, so the configurations can
+    # lean on nothing but the package's own schema; fine-tuning starts from pretraining's.
+    cfg_pt = get_cfg_defaults()
+    cfg_pt.merge_from_file(str(CONFIGS / "config_pretrain.yaml"))
+    cfg_ft = cfg_pt.clone()
+    cfg_ft.merge_from_file(str(CONFIGS / "config_finetune.yaml"))
+    assert (cfg_pt.ECG.LENGTH, cfg_pt.ECG.NUM_CHANNELS, list(cfg_pt.IMAGE.SIZE)) == (60000, 1, [224, 224])
+    assert (cfg_ft.ENDPOINT.LABEL_COLUMN, cfg_ft.ECG.LENGTH) == ("label", cfg_pt.ECG.LENGTH)
+    assert "configs/config_pretrain.yaml" in code() and "configs/config_finetune.yaml" in code()
+
+
+def test_colab_installs_the_package_and_fetches_this_folder_alone():
+    install = next(source(cell) for cell in cells() if "pip install" in source(cell))
+    assert "git+https://github.com/pykale/cardiac" in install
+    assert "sparse-checkout set tutorials/mdas_tutorial" in install
+    # A failed install must show its error, rather than surface later as a missing module.
+    assert "%%capture" not in install
+
+
+def test_the_notebook_imports_only_what_installing_kalecardiac_provides():
+    # Neither ships with Colab, nor is installed by the package: lightning_fabric is
+    # Lightning's internals, and examples/ is not part of the package.
+    assert not re.search(r"^\s*(import|from) (lightning_fabric|examples)\b", code(), re.MULTILINE)
 
 
 def test_only_the_install_and_the_download_are_skipped():
@@ -95,10 +93,9 @@ def test_your_own_data_is_one_cell_to_uncomment():
 
 
 def test_the_data_is_read_from_raw_dicom_rather_than_a_drive_or_prepared_tensors():
-    code = "\n".join(source(cell) for cell in cells())
-    assert "ECGFileSource.from_dicom" in code and "ImageFileSource.from_dicom" in code
+    assert "ECGFileSource.from_dicom" in code() and "ImageFileSource.from_dicom" in code()
     for absent in ("drive.mount", "google.colab", "torch.load", "_tensor_"):
-        assert absent not in code
+        assert absent not in code()
 
 
 def test_each_stage_of_the_workflow_has_its_sections_in_order():
@@ -128,55 +125,32 @@ def test_the_notebook_is_stored_without_outputs():
     # Outputs of a run on the tutorial dataset would carry patient-derived images and
     # numbers into the repository.
     for cell in cells():
-=======
-def test_only_the_colab_setup_is_skipped():
-    skipped = ["".join(cell["source"]) for cell in code_cells() if colab_only(cell)]
-    assert len(skipped) == 2
-    assert any("pip install" in source for source in skipped)
-    assert any("drive.mount" in source for source in skipped)
-
-
-def test_the_notebook_is_stored_without_outputs():
-    # Outputs of a run on the workshop data would carry patient-derived images and
-    # numbers into the repository.
-    for cell in code_cells():
->>>>>>> ad59998c08bbc42197e20661ea2a6d3cb2d2657a
         assert cell["outputs"] == [] and cell["execution_count"] is None
 
 
 @pytest.mark.slow
-<<<<<<< HEAD
 def test_the_notebook_runs_on_a_synthetic_dicom_cohort(tmp_path, monkeypatch, dicom_writers):
-=======
-def test_the_notebook_runs_on_its_synthetic_stand_ins(tmp_path, monkeypatch):
->>>>>>> ad59998c08bbc42197e20661ea2a6d3cb2d2657a
     pytest.importorskip("captum")
     matplotlib = pytest.importorskip("matplotlib")
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-<<<<<<< HEAD
     # Ten seconds at 50 Hz rather than 500, and small radiographs, keep CardioVAE small
     # enough to train on a CPU in seconds.
     for name, labelled in (("kalecardiac_pretraining", False), ("kalecardiac_finetuning", True)):
         dicom_writers.write_synthetic_dicom_cohort(
             tmp_path / "data" / name, num_samples=500, sampling_rate=50, image_size=(64, 64), with_labels=labelled
         )
+    # The tutorial's folder as Colab has it after the install cell, its configurations shrunk.
+    (tmp_path / "configs").mkdir()
+    for name in ("config_pretrain.yaml", "config_finetune.yaml"):
+        settings = yaml.safe_load((CONFIGS / name).read_text(encoding="utf-8"))
+        if name == "config_pretrain.yaml":
+            settings["ECG"].update(SAMPLING_RATE=50, LENGTH=12 * 500)
+            settings["IMAGE"]["SIZE"] = [32, 32]
+            settings["SOLVER"]["ACCELERATOR"] = "cpu"
+        (tmp_path / "configs" / name).write_text(yaml.safe_dump(settings), encoding="utf-8")
     monkeypatch.chdir(tmp_path)
-
-    # The tutorial's configurations set neither size, so the defaults' shrunken ones survive
-    # the merge.
-    published = cardiovae_config.get_cfg_defaults
-
-    def small_defaults():
-        cfg = published()
-        cfg.ECG.SAMPLING_RATE = 50
-        cfg.ECG.LENGTH = 12 * 500
-        cfg.IMAGE.SIZE = [32, 32]
-        cfg.SOLVER.ACCELERATOR = "cpu"
-        return cfg
-
-    monkeypatch.setattr(cardiovae_config, "get_cfg_defaults", small_defaults)
 
     namespace: dict = {"__name__": "__main__"}
     try:
@@ -188,13 +162,12 @@ def test_the_notebook_runs_on_its_synthetic_stand_ins(tmp_path, monkeypatch):
         plt.close("all")
 
     pretrain_set, fold, result = namespace["pretrain_set"], namespace["fold"], namespace["result"]
-    assert Path.cwd() == tmp_path, "the setup moved out of a working directory that was not the tutorial's"
     assert len(pretrain_set) == 20
     assert {name: tuple(value.shape) for name, value in pretrain_set[0].modalities.items()} == {
         "ecg": (1, 6000),
         "cxr": (1, 32, 32),
     }
-    assert (tmp_path / "outputs" / "cardiovae_tutorial" / "pretraining" / "pretrained.pt").exists()
+    assert (tmp_path / "outputs" / "pretraining" / "pretrained.pt").exists()
     # 20% of 20 subjects held out for testing, and 20% of the other 16 for validation.
     assert (len(fold.train_ids), len(fold.val_ids), len(fold.test_ids)) == (13, 3, 4)
     assert {"accuracy", "roc_auc", "mcc", "sensitivity", "specificity"} <= set(result.metrics)
@@ -202,20 +175,3 @@ def test_the_notebook_runs_on_its_synthetic_stand_ins(tmp_path, monkeypatch):
     # The interpretation produced an importance for every sample of the plotted lead.
     assert namespace["ecg_importance"].shape == namespace["ecg_signal"].shape == (500,)
     assert namespace["cxr_importance"].shape == (32, 32)
-=======
-    monkeypatch.chdir(tmp_path)
-    namespace: dict = {"__name__": "__main__"}
-    printed = io.StringIO()
-    with contextlib.redirect_stdout(printed), contextlib.redirect_stderr(io.StringIO()):
-        for index, cell in enumerate(code_cells()):
-            if not colab_only(cell):
-                exec(compile("".join(cell["source"]), f"tutorial cell {index}", "exec"), namespace)
-    plt.close("all")
-
-    assert namespace["SYNTHETIC"] is True
-    assert "it is not a result" in printed.getvalue()
-    assert set(namespace["summary"].index) == {"accuracy", "roc_auc", "mcc", "sensitivity", "specificity"}
-    assert (tmp_path / "cardiovae_pretrained.pt").exists()
-    # The interpretation produced an importance for every sample of the plotted lead.
-    assert namespace["ecg_importance"].shape == namespace["ecg"].shape
->>>>>>> ad59998c08bbc42197e20661ea2a6d3cb2d2657a

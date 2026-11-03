@@ -55,10 +55,6 @@ Every example has the same five parts, so moving between them costs nothing:
     └── full.yaml  the published setup
 ```
 
-The CardioVAE example's `configs/` also holds the tutorial notebook's two configurations,
-`tutorial_pretrain.yaml` and `tutorial_finetune.yaml`, merged onto the same defaults, so
-the tutorial trains this example's model.
-
 Examples run as modules from the repository root, so their imports resolve as ordinary
 packages and no `sys.path` handling is needed:
 

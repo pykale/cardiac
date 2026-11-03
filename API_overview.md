@@ -94,7 +94,6 @@ modality is a dictionary entry.
 
 `STANDARD_12_LEAD`, `LIMB_LEADS`, `PRECORDIAL_LEADS`, and `normalize_lead_name` /
 `normalize_lead_names` / `get_lead_indices`, which match names case-insensitively with a `LEAD_`
-<<<<<<< HEAD
 or `Lead` prefix stripped -- so DICOM's `Lead I (Einthoven)` is lead `I`. `check_ecg_array` and
 `check_image_array` coerce shapes, transposing only where it is unambiguous.
 
@@ -110,10 +109,6 @@ pairs one modality's export with another's. Needs the `imaging` extra.
 | `read_dicom(path)` | The one DICOM a subject's folder holds, as a `pydicom` dataset; several are an error, not a guess |
 | `read_dicom_ecg(path, group=None)` | `(recording, leads, rate)`: the recorded waveform -- not a derived median beat -- in millivolts, its leads named canonically |
 | `read_dicom_image(path)` | The pixels after the modality LUT, the VOI LUT or window, and a `MONOCHROME1` inversion |
-=======
-prefix stripped. `check_ecg_array` and `check_image_array` coerce shapes, transposing only
-where it is unambiguous.
->>>>>>> ad59998c08bbc42197e20661ea2a6d3cb2d2657a
 
 ### Supervision
 
@@ -160,11 +155,7 @@ so a source may apply it without knowing which split the subject landed in.
 | `scale_signal(signal, scale)` | Divides by a constant, **keeping** absolute amplitude |
 | `clip_signal(signal, limit)` | Bounds a saturated electrode's excursion |
 | `check_signal(signal)` | Coerces to a float32 `(channels, samples)` array, as scikit-learn's `check_array` does |
-<<<<<<< HEAD
 | `get_ecg_transform(length, sampling_rate, ..., interleave=False)` | The usual four, in the order that is not interchangeable, as a `Compose`; `interleave` adds `interleave_leads` last |
-=======
-| `get_ecg_transform(length, sampling_rate, ...)` | The usual four, in the order that is not interchangeable, as a `Compose` |
->>>>>>> ad59998c08bbc42197e20661ea2a6d3cb2d2657a
 
 Steps are chained with `torchvision.transforms.Compose`; a source's `transform` takes one.
 
@@ -175,10 +166,7 @@ Steps are chained with `torchvision.transforms.Compose`; a source's `transform` 
 | `select_leads(signal, available, wanted)` | Selection *and* ordering in one operation |
 | `derive_limb_leads(signal, available, wanted)` | Reconstructs III, aVR, aVL, aVF from I and II — exactly, by Einthoven and Goldberger |
 | `get_lead_selector(available, wanted, derive=False)` | The one-argument callable form, for a `Compose` |
-<<<<<<< HEAD
 | `interleave_leads(signal)` | `(leads, samples)` to `(1, samples * leads)`, sample by sample, as CardioVAE reads an ECG |
-=======
->>>>>>> ad59998c08bbc42197e20661ea2a6d3cb2d2657a
 | `DERIVABLE_LIMB_LEADS` | Which leads follow from I and II, and how |
 
 ### Images — `(channels, height, width)` in, the same out
@@ -377,11 +365,7 @@ summary = cross_validate(cfg, pretrained, six_lead_sources, target, get_folds(cf
 | `get_prediction_task(cfg, labels)` | `ENDPOINT`, `MODEL`, `OBJECTIVE` | The task, its class weights taken from the training fold's labels by `compute_class_weight` |
 | `score_predictions(cfg, predictions)` | `ENDPOINT` | Binary, multiclass or regression metrics |
 | `get_headline_metric(cfg)`, `get_ablation_metric(cfg)` | `ENDPOINT` | The metric a run is summarized by, and the threshold-free one a withheld modality is measured in |
-<<<<<<< HEAD
 | `get_ecg_transform_from_cfg(cfg, length=None, num_leads=None)` | `ECG` | `prepdata.get_ecg_transform` with its arguments read from `ECG`; `NUM_CHANNELS` 1 interleaves the leads |
-=======
-| `get_ecg_transform_from_cfg(cfg, length=None)` | `ECG` | `prepdata.get_ecg_transform` with its arguments read from `ECG` |
->>>>>>> ad59998c08bbc42197e20661ea2a6d3cb2d2657a
 | `get_folds(cfg, table)` | `DATASET`, `SOLVER` | `Fold`s, from `CrossValidationSplit` or `HoldOutSplit` |
 | `pretrain(cfg, model, dataset, out_dir, kinds=None)` | `OBJECTIVE`, `SOLVER`, `MODEL` | Learns a representation without labels, or loads `MODEL.PRETRAINED` strictly |
 | `fine_tune(cfg, pretrained, sources, target, fold, out_dir)` | `FINETUNE`, `FUSION`, `MODEL` | One fold: a predictor over the pretrained encoders, its best checkpoint restored, its test split scored |

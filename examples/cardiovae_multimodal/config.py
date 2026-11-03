@@ -12,16 +12,9 @@ at a real copy or falls back to the synthetic generator.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from yacs.config import CfgNode
 
 from kalecardiac.config import get_cfg_defaults as _package_defaults
-
-#: The configurations this module's defaults are merged with: quick.yaml and full.yaml for
-#: the command line, and the tutorial notebook's tutorial_pretrain.yaml and
-#: tutorial_finetune.yaml.
-CONFIG_DIR = Path(__file__).resolve().parent / "configs"
 
 #: Modality names this experiment uses, matching the directory names in its schema.
 ECG = "ecg"
@@ -64,14 +57,8 @@ def get_cfg_defaults() -> CfgNode:
     cfg.ECG.LENGTH = 60000
     cfg.ECG.SAMPLING_RATE = 500
     cfg.ECG.NORMALIZE = True
-<<<<<<< HEAD
     # 1 interleaves every lead into one long signal, as the paper does; 0 encodes the
     # leads as channels, which is the more natural reading and costs nothing to try.
-=======
-    # Channels the recording is presented with. 1 interleaves every lead into one long
-    # signal, as the paper does; 12 encodes the leads as channels, which is the more
-    # natural reading and costs nothing to try.
->>>>>>> ad59998c08bbc42197e20661ea2a6d3cb2d2657a
     cfg.ECG.NUM_CHANNELS = 1
 
     cfg.IMAGE.SIZE = [224, 224]

@@ -44,11 +44,6 @@ python -m examples.cardiovae_multimodal.main ENDPOINT.LABEL_COLUMN subtype ENDPO
 With `DATASET.ROOT` empty the run generates its cohort. That verifies the pipeline
 executes end to end; **it is not a result**, and the run says so in its first log line.
 
-`configs/tutorial_pretrain.yaml` and `configs/tutorial_finetune.yaml` configure the
-[tutorial notebook](../../tutorials/cardiac-abnormality-assessment/tutorial-CardioVAE.ipynb),
-which trains this example's model on a dataset of raw DICOM files. This command line reads
-the layout below instead, so run those two through the notebook.
-
 ## Data
 
 The cohort the paper used is a clinical registry holding identifiable patient data and

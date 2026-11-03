@@ -18,7 +18,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pandas as pd
-from torchvision.transforms import Compose
 
 from examples.cardiovae_multimodal.config import CXR, ECG
 from examples.synthetic_data import make_synthetic_multimodal_data
@@ -89,50 +88,6 @@ class CardioVAECohort:
         )
 
 
-<<<<<<< HEAD
-=======
-def ecg_pipeline(cfg, flatten: bool, num_leads: int) -> Compose:
-    """Preprocessing for the recordings, in the order the reference implementation applies it.
-
-    Interpolate dropped samples, resample to the model's rate, crop or pad each lead to a
-    fixed length, normalize each lead, then -- if the model reads the leads as one signal
-    -- interleave them into one channel.
-
-    Every step before the interleaving is per lead, and has to be: resampling or
-    interpolating a flattened strip would mix one lead into its neighbour. The
-    interleaving is the reference implementation's -- it reads a ``(samples, leads)``
-    recording and flattens it row by row, so the leads of each time step sit together --
-    and it is what the published checkpoint expects.
-
-    Args:
-        cfg: The run configuration.
-        flatten: Interleave the leads into one channel. ``ECG.LENGTH`` is then the
-            leads times the samples per lead, and each lead is cropped to its share.
-        num_leads: Leads each recording holds.
-
-    Returns:
-        A :class:`~torchvision.transforms.Compose` to hand to an ECG source.
-
-    Raises:
-        ValueError: If ``ECG.LENGTH`` is not a whole number of samples per lead.
-    """
-    if not flatten:
-        return get_ecg_transform_from_cfg(cfg)
-    if cfg.ECG.LENGTH % num_leads:
-        raise ValueError(
-            f"ECG.LENGTH {cfg.ECG.LENGTH} is not a whole number of samples for each of {num_leads} leads; set it "
-            f"to the leads times the samples per lead, e.g. {num_leads * 5000} for ten seconds at 500 Hz"
-        )
-    per_lead = get_ecg_transform_from_cfg(cfg, length=cfg.ECG.LENGTH // num_leads)
-    return Compose([*per_lead.transforms, _interleave_leads])
-
-
-def _interleave_leads(signal: np.ndarray) -> np.ndarray:
-    """One channel, the leads interleaved sample by sample, as the reference implementation flattens them."""
-    return np.ascontiguousarray(signal.T).reshape(1, -1)
-
-
->>>>>>> ad59998c08bbc42197e20661ea2a6d3cb2d2657a
 def load_local(cfg) -> CardioVAECohort:
     """Read a cohort from ``DATASET.ROOT``.
 
@@ -173,12 +128,8 @@ def load_local(cfg) -> CardioVAECohort:
     leads = list(cfg.ECG.LEADS)
     if not leads:
         raise ValueError("ECG.LEADS must name the leads each recording file stores, in the order it stores them")
-<<<<<<< HEAD
     # ECG.NUM_CHANNELS 1 interleaves the leads, as the reference implementation does.
     pipeline = get_ecg_transform_from_cfg(cfg, num_leads=len(leads))
-=======
-    pipeline = ecg_pipeline(cfg, flatten=int(cfg.ECG.NUM_CHANNELS) == 1, num_leads=len(leads))
->>>>>>> ad59998c08bbc42197e20661ea2a6d3cb2d2657a
 
     ecg_source = ECGFileSource(
         ecg_files,
@@ -214,11 +165,7 @@ def load_synthetic(cfg) -> CardioVAECohort:
         seed=cfg.SOLVER.SEED,
     )
 
-<<<<<<< HEAD
     pipeline = get_ecg_transform_from_cfg(cfg, num_leads=len(generated.leads))
-=======
-    pipeline = ecg_pipeline(cfg, flatten=int(cfg.ECG.NUM_CHANNELS) == 1, num_leads=len(generated.leads))
->>>>>>> ad59998c08bbc42197e20661ea2a6d3cb2d2657a
 
     ecg_source = ECGArraySource(
         generated.ecg,

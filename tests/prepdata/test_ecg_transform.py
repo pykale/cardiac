@@ -6,7 +6,6 @@ import numpy as np
 import pytest
 
 from kalecardiac.loaddata import LIMB_LEADS, STANDARD_12_LEAD, ECGFormatError
-<<<<<<< HEAD
 from kalecardiac.prepdata import (
     derive_limb_leads,
     get_ecg_transform,
@@ -14,9 +13,6 @@ from kalecardiac.prepdata import (
     interleave_leads,
     select_leads,
 )
-=======
-from kalecardiac.prepdata import derive_limb_leads, get_ecg_transform, get_lead_selector, select_leads
->>>>>>> ad59998c08bbc42197e20661ea2a6d3cb2d2657a
 
 
 @pytest.fixture

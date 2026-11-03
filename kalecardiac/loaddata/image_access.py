@@ -47,7 +47,6 @@ class ImageFormatError(ValueError):
     """Raised when an image does not have the shape it was declared with."""
 
 
-<<<<<<< HEAD
 def _require_dicom():
     """Import pydicom and PyKale's DICOM reader, explaining the install if either is absent."""
     try:
@@ -198,8 +197,6 @@ def read_dicom_image(path: str | Path) -> np.ndarray:
     return np.asarray(pixels, dtype=np.float32)
 
 
-=======
->>>>>>> ad59998c08bbc42197e20661ea2a6d3cb2d2657a
 def check_image_array(value: ArrayLike, channels: int) -> np.ndarray:
     """Coerce an image to ``(channels, height, width)`` float32.
 
