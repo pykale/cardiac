@@ -17,6 +17,14 @@ subjects between their training sets and so are not independent. :func:`bootstra
 resamples *subjects* within a split instead, which answers the different and usually
 more useful question of how much the number would move on another cohort of the same
 size.
+
+The computations are PyKale's, from :mod:`kale.evaluate.cross_validation` and
+:mod:`kale.evaluate.bootstrap`, which were adapted from this module; the functions here
+keep this package's signatures and defaults. ``bootstrap_ci`` keeps its argument order,
+its seed of 2026 and its skipping of a resample on which the metric raises a
+``ValueError``, as a scikit-learn metric does. Delegating adds that a resample whose metric
+is NaN or infinite is skipped too, and a metric that is not finite on every subject
+raises, rather than both turning the interval into NaN.
 """
 
 from __future__ import annotations
@@ -24,6 +32,9 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Mapping, Sequence
 
 import numpy as np
+from kale.evaluate.bootstrap import bootstrap_ci as _kale_bootstrap_ci
+from kale.evaluate.cross_validation import pool_folds as _kale_pool_folds
+from kale.evaluate.cross_validation import summarize_folds as _kale_summarize_folds
 from numpy.typing import ArrayLike
 
 from kalecardiac.evaluate.classification_metrics import MetricError
@@ -45,31 +56,7 @@ def summarize_folds(fold_metrics: Sequence[Mapping[str, float]], keys: Sequence[
     Raises:
         MetricError: If no fold is given.
     """
-    folds = list(fold_metrics)
-    if not folds:
-        raise MetricError("summarize_folds needs at least one fold")
-
-    if keys is None:
-        keys = [
-            key
-            for key in folds[0]
-            if all(isinstance(fold.get(key), int | float) and not isinstance(fold.get(key), bool) for fold in folds)
-        ]
-
-    summary: dict = {"n_folds": len(folds)}
-    for key in keys:
-        values = np.array([float(fold[key]) for fold in folds if key in fold], dtype=float)
-        if values.size == 0:
-            continue
-        summary[key] = {
-            "mean": float(values.mean()),
-            # Population standard deviation over the folds observed, matching what both
-            # cardiac studies report. It describes the spread of these folds, not the
-            # uncertainty of the mean.
-            "std": float(values.std()),
-            "values": values.tolist(),
-        }
-    return summary
+    return _kale_summarize_folds(fold_metrics, keys)
 
 
 def flatten_fold_summary(summary: Mapping) -> dict:
@@ -128,39 +115,25 @@ def bootstrap_ci(
         ``"point"``, ``"low"``, ``"high"``, ``"confidence"`` and ``"n_used"``.
 
     Raises:
-        MetricError: If the arrays disagree in length, or no resample could be scored.
-        ValueError: If ``confidence`` is outside ``(0, 1)``.
+        MetricError: If the arrays disagree in length, the metric is not finite on every
+            subject, or no resample could be scored to a finite value.
+        ValueError: If ``n_resamples`` is not positive, or ``confidence`` is outside ``(0, 1)``.
     """
     labels = np.asarray(labels).reshape(-1)
     scores = np.asarray(scores, dtype=np.float64).reshape(-1)
     if labels.size != scores.size:
         raise MetricError(f"got {labels.size} labels and {scores.size} scores")
-    if not 0 < confidence < 1:
-        raise ValueError(f"confidence must lie in (0, 1), got {confidence}")
-
-    generator = np.random.default_rng(seed)
-    values = []
-    for _ in range(n_resamples):
-        draw = generator.integers(0, labels.size, size=labels.size)
-        try:
-            values.append(float(metric(labels[draw], scores[draw])))
-        except (MetricError, ValueError):
-            continue
-
-    if not values:
-        raise MetricError(
-            "no bootstrap resample could be scored; with this few subjects, or this severe an imbalance, "
-            "almost every resample holds one class"
-        )
-
-    tail = (1.0 - confidence) / 2.0
-    return {
-        "point": float(metric(labels, scores)),
-        "low": float(np.percentile(values, 100 * tail)),
-        "high": float(np.percentile(values, 100 * (1.0 - tail))),
-        "confidence": float(confidence),
-        "n_used": len(values),
-    }
+    # A scikit-learn metric raises a plain ValueError on a one-class resample, so it marks
+    # a resample as undefined here as MetricError does.
+    return _kale_bootstrap_ci(
+        metric,
+        labels,
+        scores,
+        n_resamples=n_resamples,
+        confidence=confidence,
+        seed=seed,
+        undefined_errors=(MetricError, ValueError),
+    )
 
 
 def pool_folds(fold_predictions: Iterable) -> tuple[np.ndarray, np.ndarray]:
@@ -179,15 +152,12 @@ def pool_folds(fold_predictions: Iterable) -> tuple[np.ndarray, np.ndarray]:
         ``(labels, scores)`` over every fold.
 
     Raises:
-        MetricError: If no fold is given, or a fold carries no target.
+        MetricError: If no fold is given, a fold carries no target, or a fold's targets
+            and scores differ in length.
     """
-    labels, scores = [], []
+    pairs = []
     for prediction in fold_predictions:
         if not prediction.targets:
             raise MetricError(f"fold {prediction.fold} carries no target, so there is nothing to score against")
-        labels.append(next(iter(prediction.targets.values())))
-        scores.append(prediction.scores)
-
-    if not labels:
-        raise MetricError("pool_folds needs at least one fold")
-    return np.concatenate(labels), np.concatenate(scores)
+        pairs.append((next(iter(prediction.targets.values())), prediction.scores))
+    return _kale_pool_folds(pairs)

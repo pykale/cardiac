@@ -196,11 +196,11 @@ class TestMulticlassRocAuc:
             multiclass_roc_auc(np.array([0, 1, 0, 1]), np.full((4, 3), 1 / 3))
 
     def test_a_label_outside_the_classes_is_rejected(self):
-        with pytest.raises(MetricError, match="outside the 3 classes"):
+        with pytest.raises(MetricError, match=r"class indices 0 to 2, got \[3\]"):
             multiclass_roc_auc(np.array([0, 1, 3]), np.full((3, 3), 1 / 3))
 
     def test_a_fractional_label_is_rejected(self):
-        with pytest.raises(MetricError, match="whole numbers"):
+        with pytest.raises(MetricError, match=r"class indices 0 to 2, got \[0.5\]"):
             multiclass_roc_auc(np.array([0.0, 0.5, 2.0]), np.full((3, 3), 1 / 3))
 
     def test_mismatched_shapes_are_rejected(self):
