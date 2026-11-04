@@ -12,28 +12,16 @@ few subjects furthest out; and R-squared says how much of the cohort's variation
 model accounts for, which is the only one of the three that is comparable across
 endpoints.
 
-Each is scikit-learn's. What this module adds is the clinical summary around them --
-the signed bias, the unit, and an R-squared that is reported as missing, rather than as
-a number, when the targets do not vary.
+Each is scikit-learn's, computed by :func:`kale.evaluate.regression_metrics.regression_metrics`,
+which was adapted from this module and adds the clinical summary around them -- the
+signed bias, the unit, and an R-squared that is reported as missing, rather than as a
+number, when the targets do not vary.
 """
 
 from __future__ import annotations
 
-import numpy as np
+from kale.evaluate.regression_metrics import regression_metrics as _kale_regression_metrics
 from numpy.typing import ArrayLike
-from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
-
-from kalecardiac.evaluate.classification_metrics import MetricError
-
-
-def _as_pair(targets: ArrayLike, predictions: ArrayLike) -> tuple[np.ndarray, np.ndarray]:
-    targets = np.asarray(targets, dtype=np.float64).reshape(-1)
-    predictions = np.asarray(predictions, dtype=np.float64).reshape(-1)
-    if targets.size != predictions.size:
-        raise MetricError(f"got {targets.size} targets and {predictions.size} predictions")
-    if targets.size == 0:
-        raise MetricError("a regression metric needs at least one subject")
-    return targets, predictions
 
 
 def regression_metrics(targets: ArrayLike, predictions: ArrayLike, unit: str | None = None) -> dict:
@@ -52,16 +40,4 @@ def regression_metrics(targets: ArrayLike, predictions: ArrayLike, unit: str | N
     Raises:
         MetricError: If the arrays disagree in length or are empty.
     """
-    targets, predictions = _as_pair(targets, predictions)
-    return {
-        "n": int(targets.size),
-        "rmse": float(np.sqrt(mean_squared_error(targets, predictions))),
-        "mae": float(mean_absolute_error(targets, predictions)),
-        # Signed, not absolute: a model that systematically over-predicts a pressure is
-        # wrong in a way a symmetric error cannot show.
-        "bias": float(np.mean(predictions - targets)),
-        "unit": unit,
-        # Undefined when every target is the same value: scikit-learn reports 0 or 1
-        # there, which a results table would show as a result.
-        "r2": float(r2_score(targets, predictions)) if np.ptp(targets) > 0 else None,
-    }
+    return _kale_regression_metrics(targets, predictions, unit)

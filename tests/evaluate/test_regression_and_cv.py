@@ -57,7 +57,7 @@ class TestRegressionMetrics:
             regression_metrics(np.zeros(4), np.zeros(5))
 
     def test_an_empty_cohort_is_rejected(self):
-        with pytest.raises(MetricError, match="at least one subject"):
+        with pytest.raises(MetricError, match="at least one sample"):
             regression_metrics(np.array([]), np.array([]))
 
     def test_the_unit_is_a_label_and_changes_nothing(self):
@@ -126,11 +126,11 @@ class TestBootstrapCi:
         assert bootstrap_ci(labels, scores, roc_auc, n_resamples=100, seed=0)["n_used"] <= 100
 
     def test_a_cohort_no_resample_can_score_is_rejected_with_the_reason(self):
-        # Every resample of a one-class split is also one class, so no bootstrap value
-        # exists. Failing with the reason beats returning a silently meaningless zero.
+        # A one-class split cannot be scored at all, so it fails on the split itself, before
+        # any resample. Failing with the reason beats returning a silently meaningless zero.
         labels = np.zeros(20)
         scores = np.random.default_rng(0).normal(size=20)
-        with pytest.raises(MetricError, match="almost every resample holds one class"):
+        with pytest.raises(MetricError, match="needs both classes"):
             bootstrap_ci(labels, scores, roc_auc, n_resamples=20, seed=0)
 
     def test_a_severely_imbalanced_cohort_reports_how_many_resamples_survived(self):

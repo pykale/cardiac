@@ -14,49 +14,38 @@ to the sigmoid, so only the threshold metrics apply it. A multiclass one-versus-
 ranking is *not* invariant to the softmax -- a class's probability depends on every
 other class's logit -- so the multiclass metrics apply it to anything that is not
 already a distribution over the classes.
+
+The computations are PyKale's: each function here delegates to its namesake in
+:mod:`kale.evaluate.classification_metrics`, which was adapted from this module, and keeps
+this package's signature and clinical documentation. ``MetricError`` is PyKale's class, so
+an ``except MetricError`` here also catches the core's. Delegating changes four things,
+all for inputs the metrics were never defined on: a binary label other than exactly 0 or
+1, or a multiclass label that is not exactly a class index, raises rather than being cast;
+and a two-column multiclass score is scored as the binary area instead of failing.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
-from contextlib import suppress
 
-import numpy as np
+from kale.evaluate.classification_metrics import MetricError
+from kale.evaluate.classification_metrics import binary_metrics as _kale_binary_metrics
+from kale.evaluate.classification_metrics import mean_roc_curve as _kale_mean_roc_curve
+from kale.evaluate.classification_metrics import multiclass_metrics as _kale_multiclass_metrics
+from kale.evaluate.classification_metrics import multiclass_roc_auc as _kale_multiclass_roc_auc
+from kale.evaluate.classification_metrics import roc_auc as _kale_roc_auc
+from kale.evaluate.classification_metrics import sensitivity_specificity as _kale_sensitivity_specificity
 from numpy.typing import ArrayLike
-from scipy.special import expit, softmax
-from sklearn.metrics import (
-    accuracy_score,
-    average_precision_score,
-    balanced_accuracy_score,
-    confusion_matrix,
-    f1_score,
-    matthews_corrcoef,
-    roc_auc_score,
-    roc_curve,
-)
 
-
-class MetricError(ValueError):
-    """Raised when a metric cannot be computed from the values given."""
-
-
-def _as_binary_labels(labels: ArrayLike) -> np.ndarray:
-    labels = np.asarray(labels).reshape(-1)
-    present = np.unique(labels)
-    if present.size < 2:
-        raise MetricError(
-            f"a binary metric needs both classes, but every subject has label {present.tolist()}; on a small "
-            f"cardiac cohort this usually means the split is too small or an exclusion removed one class"
-        )
-    return labels.astype(int)
-
-
-def _as_probabilities(scores: ArrayLike) -> np.ndarray:
-    """Read scores as probabilities, applying a sigmoid only if they are not already."""
-    scores = np.asarray(scores, dtype=np.float64).reshape(-1)
-    if scores.size and scores.min() >= 0.0 and scores.max() <= 1.0:
-        return scores
-    return expit(scores)
+__all__ = [
+    "MetricError",
+    "binary_metrics",
+    "mean_roc_curve",
+    "multiclass_metrics",
+    "multiclass_roc_auc",
+    "roc_auc",
+    "sensitivity_specificity",
+]
 
 
 def roc_auc(labels: ArrayLike, scores: ArrayLike) -> float:
@@ -70,9 +59,9 @@ def roc_auc(labels: ArrayLike, scores: ArrayLike) -> float:
         The area: 0.5 for a random ranking, 1.0 for a perfect one.
 
     Raises:
-        MetricError: If only one class is present.
+        MetricError: If a label is not exactly 0 or 1, or only one class is present.
     """
-    return float(roc_auc_score(_as_binary_labels(labels), np.asarray(scores).reshape(-1)))
+    return _kale_roc_auc(labels, scores)
 
 
 def sensitivity_specificity(labels: ArrayLike, scores: ArrayLike, threshold: float = 0.5) -> tuple[float, float]:
@@ -91,16 +80,9 @@ def sensitivity_specificity(labels: ArrayLike, scores: ArrayLike, threshold: flo
         ``(sensitivity, specificity)``, each in ``[0, 1]``.
 
     Raises:
-        MetricError: If only one class is present.
+        MetricError: If a label is not exactly 0 or 1, or only one class is present.
     """
-    labels = _as_binary_labels(labels)
-    predicted = (_as_probabilities(scores) >= threshold).astype(int)
-    true_negative, false_positive, false_negative, true_positive = confusion_matrix(
-        labels, predicted, labels=[0, 1]
-    ).ravel()
-    sensitivity = true_positive / max(true_positive + false_negative, 1)
-    specificity = true_negative / max(true_negative + false_positive, 1)
-    return float(sensitivity), float(specificity)
+    return _kale_sensitivity_specificity(labels, scores, threshold)
 
 
 def binary_metrics(labels: ArrayLike, scores: ArrayLike, threshold: float = 0.5) -> dict:
@@ -119,64 +101,9 @@ def binary_metrics(labels: ArrayLike, scores: ArrayLike, threshold: float = 0.5)
         ``{"tn", "fp", "fn", "tp"}`` so the numbers behind the rates stay visible.
 
     Raises:
-        MetricError: If only one class is present.
+        MetricError: If a label is not exactly 0 or 1, or only one class is present.
     """
-    labels = _as_binary_labels(labels)
-    scores = np.asarray(scores, dtype=np.float64).reshape(-1)
-    probabilities = _as_probabilities(scores)
-    predicted = (probabilities >= threshold).astype(int)
-    true_negative, false_positive, false_negative, true_positive = confusion_matrix(
-        labels, predicted, labels=[0, 1]
-    ).ravel()
-    sensitivity, specificity = sensitivity_specificity(labels, scores, threshold)
-
-    return {
-        "n": int(labels.size),
-        "n_positive": int(labels.sum()),
-        "positive_rate": float(labels.mean()),
-        "threshold": float(threshold),
-        "roc_auc": float(roc_auc_score(labels, scores)),
-        "average_precision": float(average_precision_score(labels, scores)),
-        "accuracy": float(accuracy_score(labels, predicted)),
-        "balanced_accuracy": float(balanced_accuracy_score(labels, predicted)),
-        "sensitivity": sensitivity,
-        "specificity": specificity,
-        "f1": float(f1_score(labels, predicted, zero_division=0)),
-        "mcc": float(matthews_corrcoef(labels, predicted)),
-        "confusion": {
-            "tn": int(true_negative),
-            "fp": int(false_positive),
-            "fn": int(false_negative),
-            "tp": int(true_positive),
-        },
-    }
-
-
-def _as_class_probabilities(scores: np.ndarray) -> np.ndarray:
-    """Read ``(N, K)`` scores as probabilities, applying a softmax only if they are not already."""
-    if scores.min() >= 0.0 and scores.max() <= 1.0 and np.allclose(scores.sum(axis=1), 1.0, atol=1e-4):
-        # Renormalised because a float32 softmax can drift outside scikit-learn's
-        # tolerance for "sums to one", which is far tighter than this check's.
-        return scores / scores.sum(axis=1, keepdims=True)
-    return softmax(scores, axis=1)
-
-
-def _as_multiclass(labels: ArrayLike, scores: ArrayLike) -> tuple[np.ndarray, np.ndarray]:
-    """Validate a multiclass prediction and return ``(labels, probabilities)`` as arrays."""
-    labels = np.asarray(labels).reshape(-1)
-    scores = np.asarray(scores, dtype=np.float64)
-    if scores.ndim != 2 or scores.shape[0] != labels.size or scores.shape[1] < 2:
-        raise MetricError(f"expected ({labels.size}, num_classes) scores, got {scores.shape}")
-    probabilities = _as_class_probabilities(scores)
-    if not np.all(np.isclose(labels, np.round(labels))):
-        raise MetricError("multiclass labels must be class indices, but some are not whole numbers")
-    labels = labels.astype(int)
-    out_of_range = sorted({int(value) for value in labels if not 0 <= value < probabilities.shape[1]})
-    if out_of_range:
-        raise MetricError(
-            f"labels {out_of_range} lie outside the {probabilities.shape[1]} classes the probabilities cover"
-        )
-    return labels, probabilities
+    return _kale_binary_metrics(labels, scores, threshold)
 
 
 def multiclass_roc_auc(labels: ArrayLike, scores: ArrayLike) -> float:
@@ -204,15 +131,7 @@ def multiclass_roc_auc(labels: ArrayLike, scores: ArrayLike) -> float:
             class is absent -- its one-versus-rest curve is then undefined, which on a
             small validation split is ordinary rather than an error in the model.
     """
-    labels, probabilities = _as_multiclass(labels, scores)
-    num_classes = probabilities.shape[1]
-    absent = sorted(set(range(num_classes)) - set(np.unique(labels).tolist()))
-    if absent:
-        raise MetricError(
-            f"class(es) {absent} are absent from these labels, so their one-versus-rest curve is undefined; "
-            f"the split is too small or too imbalanced to score every class"
-        )
-    return float(roc_auc_score(labels, probabilities, multi_class="ovr", average="macro"))
+    return _kale_multiclass_roc_auc(labels, scores)
 
 
 def multiclass_metrics(labels: ArrayLike, scores: ArrayLike, class_names: Sequence[str] | None = None) -> dict:
@@ -229,27 +148,10 @@ def multiclass_metrics(labels: ArrayLike, scores: ArrayLike, class_names: Sequen
         is defined, and the confusion matrix as a nested list.
 
     Raises:
-        MetricError: If the shapes disagree, or fewer than two classes are present.
+        MetricError: If the shapes disagree, a label is not a valid class index, or fewer
+            than two classes are present.
     """
-    labels, probabilities = _as_multiclass(labels, scores)
-    if np.unique(labels).size < 2:
-        raise MetricError("a multiclass metric needs at least two classes present")
-
-    num_classes = probabilities.shape[1]
-    predicted = probabilities.argmax(axis=1)
-    summary = {
-        "n": int(labels.size),
-        "accuracy": float(accuracy_score(labels, predicted)),
-        "balanced_accuracy": float(balanced_accuracy_score(labels, predicted)),
-        "f1_macro": float(f1_score(labels, predicted, average="macro", zero_division=0)),
-        "confusion": confusion_matrix(labels, predicted, labels=list(range(num_classes))).tolist(),
-        "classes": list(class_names) if class_names else [str(index) for index in range(num_classes)],
-    }
-    # One-versus-rest AUC is undefined when a class is absent from this split, which on
-    # a small cohort is ordinary; report what can be computed rather than failing.
-    with suppress(MetricError):
-        summary["roc_auc_ovr"] = multiclass_roc_auc(labels, probabilities)
-    return summary
+    return _kale_multiclass_metrics(labels, scores, class_names)
 
 
 def mean_roc_curve(labels_per_run: list, scores_per_run: list, grid_size: int = 100) -> dict:
@@ -277,37 +179,4 @@ def mean_roc_curve(labels_per_run: list, scores_per_run: list, grid_size: int = 
         MetricError: If no run is given, the two lists disagree in length, or a run has
             only one class.
     """
-    if not labels_per_run:
-        raise MetricError("mean_roc_curve needs at least one run")
-    if len(labels_per_run) != len(scores_per_run):
-        raise MetricError(
-            f"got {len(labels_per_run)} label arrays but {len(scores_per_run)} score arrays; each run "
-            f"contributes exactly one of each"
-        )
-
-    grid = np.linspace(0.0, 1.0, grid_size)
-    curves, areas = [], []
-    for labels, scores in zip(labels_per_run, scores_per_run, strict=True):
-        labels = _as_binary_labels(labels)
-        scores = np.asarray(scores, dtype=np.float64).reshape(-1)
-        false_positive, true_positive, _ = roc_curve(labels, scores)
-        interpolated = np.interp(grid, false_positive, true_positive)
-        # Interpolating onto a fixed grid does not guarantee the endpoints, which are
-        # (0, 0) and (1, 1) for every ROC curve by construction.
-        interpolated[0] = 0.0
-        curves.append(interpolated)
-        areas.append(float(roc_auc_score(labels, scores)))
-
-    stacked = np.vstack(curves)
-    mean = stacked.mean(axis=0)
-    mean[-1] = 1.0
-
-    return {
-        "fpr": grid,
-        "tpr_mean": mean,
-        "tpr_std": stacked.std(axis=0),
-        "tpr_runs": stacked,
-        "auc_mean": float(np.mean(areas)),
-        "auc_std": float(np.std(areas)),
-        "auc_runs": areas,
-    }
+    return _kale_mean_roc_curve(labels_per_run, scores_per_run, grid_size)
