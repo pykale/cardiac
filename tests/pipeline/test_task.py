@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 import torch
+from kale.evaluate.classification_metrics import MetricError, multiclass_roc_auc
 
-from kalecardiac.evaluate import MetricError, multiclass_roc_auc
 from kalecardiac.loaddata import LABEL_KEY, VALUE_KEY, SubjectBatch
 from kalecardiac.model.embed import PredictionOutput
 from kalecardiac.model.embed.multimodal_vae import VAEOutput, VAEStream

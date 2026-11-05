@@ -25,19 +25,14 @@ from collections.abc import Callable, Mapping
 
 import numpy as np
 import pandas as pd
+from kale.evaluate.classification_metrics import binary_metrics, multiclass_metrics, multiclass_roc_auc, roc_auc
+from kale.evaluate.regression_metrics import regression_metrics
 from numpy.typing import ArrayLike
 from sklearn.metrics import r2_score
 from sklearn.utils.class_weight import compute_class_weight
 from yacs.config import CfgNode
 
-from kalecardiac.evaluate import (
-    SplitPredictions,
-    binary_metrics,
-    multiclass_metrics,
-    multiclass_roc_auc,
-    regression_metrics,
-    roc_auc,
-)
+from kalecardiac.evaluate import SplitPredictions
 from kalecardiac.loaddata import LABEL_KEY, VALUE_KEY, ColumnTarget
 from kalecardiac.pipeline import ClassificationTask, PredictionTask, RegressionTask
 
@@ -230,9 +225,9 @@ def score_predictions(cfg: CfgNode, predictions: SplitPredictions) -> dict:
         predictions: A split's scores, with the targets they are scored against.
 
     Returns:
-        :func:`~kalecardiac.evaluate.regression_metrics`,
-        :func:`~kalecardiac.evaluate.multiclass_metrics` or
-        :func:`~kalecardiac.evaluate.binary_metrics`.
+        :func:`kale.evaluate.regression_metrics.regression_metrics`,
+        :func:`kale.evaluate.classification_metrics.multiclass_metrics` or
+        :func:`kale.evaluate.classification_metrics.binary_metrics`.
     """
     if cfg.ENDPOINT.REGRESSION:
         return regression_metrics(predictions.targets[VALUE_KEY], predictions.scores, unit=cfg.ENDPOINT.UNIT)
@@ -269,7 +264,7 @@ def format_headline(cfg: CfgNode, metrics: Mapping, folded: bool = False) -> str
     Args:
         cfg: The run configuration.
         metrics: One fold's metrics, or with ``folded`` a
-            :func:`~kalecardiac.evaluate.summarize_folds` summary.
+            :func:`kale.evaluate.cross_validation.summarize_folds` summary.
         folded: Report the mean and spread across folds.
 
     Returns:

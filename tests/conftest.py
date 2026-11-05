@@ -103,15 +103,6 @@ def experts():
 
 
 @pytest.fixture
-def binary_scores():
-    """Labels and scores with a real but imperfect ranking, for metric tests."""
-    generator = np.random.default_rng(0)
-    labels = generator.integers(0, 2, size=60)
-    scores = generator.normal(size=60) + labels
-    return labels, scores
-
-
-@pytest.fixture
 def dicom_writers():
     """The synthetic DICOM writers -- skipping the test where the ``imaging`` extra is absent.
 

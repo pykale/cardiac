@@ -21,7 +21,7 @@ import yaml
 
 from kalecardiac.config import get_cfg_defaults
 
-TUTORIAL = Path(__file__).resolve().parents[1] / "tutorials" / "mdas_tutorial"
+TUTORIAL = Path(__file__).resolve().parents[2] / "tutorials" / "mdas_tutorial"
 NOTEBOOK = TUTORIAL / "tutorial-CardioVAE.ipynb"
 CONFIGS = TUTORIAL / "configs"
 

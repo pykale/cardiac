@@ -64,7 +64,16 @@ RENAMED: dict[str, dict[str, str]] = {
         "positive_weight_from_labels": "removed: use sklearn.utils.class_weight.compute_class_weight",
     },
     "kalecardiac.evaluate": {
-        "summarise_folds": "summarize_folds",
+        "summarise_folds": "removed: use kale.evaluate.cross_validation.summarize_folds",
+        "MetricError": "removed: use kale.evaluate.classification_metrics.MetricError",
+        "binary_metrics": "removed: use kale.evaluate.classification_metrics.binary_metrics",
+        "mean_roc_curve": "removed: use kale.evaluate.classification_metrics.mean_roc_curve",
+        "multiclass_metrics": "removed: use kale.evaluate.classification_metrics.multiclass_metrics",
+        "multiclass_roc_auc": "removed: use kale.evaluate.classification_metrics.multiclass_roc_auc",
+        "regression_metrics": "removed: use kale.evaluate.regression_metrics.regression_metrics",
+        "roc_auc": "removed: use kale.evaluate.classification_metrics.roc_auc",
+        "sensitivity_specificity": "removed: use kale.evaluate.classification_metrics.sensitivity_specificity",
+        "summarize_folds": "removed: use kale.evaluate.cross_validation.summarize_folds",
         "r2_score": "removed: use sklearn.metrics.r2_score",
     },
     "kalecardiac.interpret": {

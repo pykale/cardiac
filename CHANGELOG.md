@@ -83,13 +83,17 @@ Notable changes to KaleCardiac. The format follows
 
 ### Changed
 
-- **`kalecardiac.evaluate` computes with PyKale's `kale.evaluate`**, which was adapted
-  from it. Every function keeps its name, signature, defaults and documentation, and
-  `bootstrap_ci` keeps its argument order, its seed of 2026 and its skipping of a
-  resample on which the metric raises a `ValueError`. Results on valid inputs are
-  unchanged to the bit. `MetricError` is PyKale's class, so an `except MetricError` here
-  also catches the core's. What changes is confined to inputs the metrics were never
-  defined on:
+- **Shared evaluation functions now come directly from PyKale.** Import classification
+  metrics and `MetricError` from `kale.evaluate.classification_metrics`, regression
+  metrics from `kale.evaluate.regression_metrics`, and `summarize_folds` from
+  `kale.evaluate.cross_validation`. The duplicate KaleCardiac classification and
+  regression modules, their one-line wrappers and the `summarize_folds` wrapper are
+  removed. Existing imports from `kalecardiac.evaluate` must use those PyKale paths.
+  `kalecardiac.evaluate` still provides prediction records, `flatten_fold_summary`,
+  and adapters for `bootstrap_ci` and `pool_folds`. The former keeps its labels-first
+  argument order, seed of 2026 and skipping of `ValueError` resamples; the latter
+  accepts `SplitPredictions`. Results on valid inputs are unchanged to the bit. The
+  PyKale functions change behavior for inputs on which these metrics were undefined:
   - a two-column multiclass score is scored as the binary area instead of failing in
     scikit-learn;
   - a binary label other than exactly 0 or 1, or a multiclass label that is not exactly

@@ -1,11 +1,10 @@
 """Aggregating a result across folds, and putting an interval on it.
 
 A cardiac cohort of a few hundred subjects is evaluated by cross-validation, so what
-gets reported is not one number but a distribution over folds. Two things follow, and
-both are here because both are routinely got wrong.
+gets reported is not one number but a distribution over folds. Two distinctions matter.
 
 **How folds are summarised.** The mean and standard deviation *over folds* is what both
-cardiac studies report, and it is what :func:`summarize_folds` computes. It is not the
+cardiac studies report, and it is what :func:`kale.evaluate.cross_validation.summarize_folds` computes. It is not the
 same as pooling every fold's predictions into one array and scoring that: the pooled
 figure weights subjects equally and the fold-wise mean weights folds equally, and for
 unequal folds they differ. Both are defensible; reporting one and describing the other
@@ -18,58 +17,35 @@ resamples *subjects* within a split instead, which answers the different and usu
 more useful question of how much the number would move on another cohort of the same
 size.
 
-The computations are PyKale's, from :mod:`kale.evaluate.cross_validation` and
-:mod:`kale.evaluate.bootstrap`, which were adapted from this module; the functions here
-keep this package's signatures and defaults. ``bootstrap_ci`` keeps its argument order,
-its seed of 2026 and its skipping of a resample on which the metric raises a
-``ValueError``, as a scikit-learn metric does. Delegating adds that a resample whose metric
-is NaN or infinite is skipped too, and a metric that is not finite on every subject
-raises, rather than both turning the interval into NaN.
+Use :func:`kale.evaluate.cross_validation.summarize_folds` for a summary over folds.
+The functions retained here adapt PyKale to Cardiac's data or reporting contract:
+``bootstrap_ci`` keeps its labels-first call and seed of 2026, ``pool_folds`` accepts
+``SplitPredictions``, and ``flatten_fold_summary`` makes a row for a results table.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping
 
 import numpy as np
 from kale.evaluate.bootstrap import bootstrap_ci as _kale_bootstrap_ci
+from kale.evaluate.classification_metrics import MetricError
 from kale.evaluate.cross_validation import pool_folds as _kale_pool_folds
-from kale.evaluate.cross_validation import summarize_folds as _kale_summarize_folds
 from numpy.typing import ArrayLike
-
-from kalecardiac.evaluate.classification_metrics import MetricError
-
-
-def summarize_folds(fold_metrics: Sequence[Mapping[str, float]], keys: Sequence[str] | None = None) -> dict:
-    """Mean and standard deviation of each metric across folds.
-
-    Args:
-        fold_metrics: One mapping of metric name to value per fold, as
-            :func:`~kalecardiac.evaluate.binary_metrics` returns them.
-        keys: Which metrics to summarise. ``None`` summarises every key whose value is
-            numeric in every fold, which skips the nested confusion matrix and any
-            string label without the caller having to list them.
-
-    Returns:
-        ``{metric: {"mean": ..., "std": ..., "values": [...]}}`` plus ``"n_folds"``.
-
-    Raises:
-        MetricError: If no fold is given.
-    """
-    return _kale_summarize_folds(fold_metrics, keys)
 
 
 def flatten_fold_summary(summary: Mapping) -> dict:
-    """A :func:`summarize_folds` summary as flat columns, for one row of a results table.
+    """A PyKale fold summary as flat columns, for one row of a results table.
 
     Each metric's mean and spread become a column of their own, and the per-fold values
     stay in the summary::
 
+        >>> from kale.evaluate.cross_validation import summarize_folds
         >>> flatten_fold_summary(summarize_folds([{"roc_auc": 0.5}, {"roc_auc": 1.0}]))
         {'n_folds': 2, 'roc_auc_mean': 0.75, 'roc_auc_std': 0.25}
 
     Args:
-        summary: As :func:`summarize_folds` returns it.
+        summary: As :func:`kale.evaluate.cross_validation.summarize_folds` returns it.
 
     Returns:
         ``n_folds``, then ``<metric>_mean`` and ``<metric>_std`` for every metric.
@@ -106,7 +82,7 @@ def bootstrap_ci(
         labels: ``(N,)`` targets.
         scores: ``(N,)`` predictions.
         metric: Takes ``(labels, scores)`` and returns a float, e.g.
-            :func:`~kalecardiac.evaluate.roc_auc`.
+            :func:`kale.evaluate.classification_metrics.roc_auc`.
         n_resamples: Bootstrap resamples to draw.
         confidence: Interval width, e.g. 0.95 for a 95% interval.
         seed: Seed, making the interval reproducible.
@@ -140,9 +116,11 @@ def pool_folds(fold_predictions: Iterable) -> tuple[np.ndarray, np.ndarray]:
     """Concatenate every fold's labels and scores into one pair of arrays.
 
     The input to a *pooled* metric, which weights subjects equally where
-    :func:`summarize_folds` weights folds equally. In a cross-validation where every
+    :func:`kale.evaluate.cross_validation.summarize_folds` weights folds equally. In a cross-validation where every
     subject is tested exactly once, the pooled arrays cover the whole cohort, and a
-    metric over them is the cohort-level figure.
+    metric over them is the cohort-level figure. Pool scores from different fitted
+    models only when they share a comparable scale, such as calibrated probabilities.
+    Otherwise, score each fold and use :func:`kale.evaluate.cross_validation.summarize_folds`.
 
     Args:
         fold_predictions: :class:`~kalecardiac.evaluate.SplitPredictions` per fold,

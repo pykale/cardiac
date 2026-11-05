@@ -23,10 +23,11 @@ import numpy as np
 import pytest
 import pytorch_lightning as pl
 import torch
+from kale.evaluate.classification_metrics import binary_metrics, multiclass_metrics, roc_auc
 from torch.utils.data import DataLoader
 
 from examples.synthetic_data import make_synthetic_multimodal_data
-from kalecardiac.evaluate import binary_metrics, multiclass_metrics, predict_split, roc_auc, save_predictions
+from kalecardiac.evaluate import predict_split, save_predictions
 from kalecardiac.interpret import attribution_ratios, modality_ablation, modality_attributions
 from kalecardiac.loaddata import (
     ColumnTarget,
