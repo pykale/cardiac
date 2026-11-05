@@ -9,8 +9,8 @@ graft tutorials
 include AGENTS.md API_overview.md
 
 prune outputs
-# The tutorial runs from its own folder, so that is where it unpacks its dataset and writes
-# its run; neither belongs in a distribution.
+# The tutorials run from their own folder, so that is where they download and unpack their
+# dataset and write their runs; none of it belongs in a distribution.
 prune tutorials/*/data
 prune tutorials/*/outputs
-global-exclude __pycache__ *.py[cod] *.npy *.npz *.pt *.pth *.ckpt *.dcm *.edf *.hea *.dat
+global-exclude __pycache__ *.py[cod] *.npy *.npz *.pt *.pth *.ckpt *.dcm *.edf *.hea *.dat *.zip

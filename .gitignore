@@ -17,6 +17,8 @@ coverage.xml
 # Data and experiment outputs. Nothing patient-derived belongs in this repository.
 data/
 outputs/
+# The tutorials' dataset archive, which their download cell saves beside the notebook.
+*.zip
 checkpoints/
 lightning_logs/
 *.pt
