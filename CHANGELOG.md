@@ -22,7 +22,7 @@ Notable changes to KaleCardiac. The format follows [Keep a Changelog](https://ke
 
 ### Changed
 
-- Gaussian averaging, barycenter, grouping and hierarchical fusion delegate to PyKale core; public imports, fusion configuration names and `GaussianPosterior` results are unchanged. These fusions now reject non-binary masks, non-tensor masks, mismatched or non-floating dtypes and non-finite weights, which were previously accepted.
+- Shared Gaussian averaging, barycenter, grouping and hierarchical functions now come directly from `kale.embed.multimodal_fusion`; the duplicate KaleCardiac public functions are removed. This changes those import paths and their direct return value from `GaussianPosterior` to a `(mean, log_var)` tensor pair. Cardiac's `build_expert_fusion` and `EXPERT_FUSIONS` retain their names, options and `GaussianPosterior` result for models. PyKale rejects non-binary masks, non-tensor masks, mismatched or non-floating dtypes and non-finite weights on these shared methods. Cardiac's `product_of_experts` remains because its masked-product API differs.
 - Multiclass metrics accept logits and apply the softmax themselves, as the binary ones accept logits; a one-versus-rest ranking, unlike a binary one, depends on it.
 - Metric and attribution functions are annotated as taking any array-like, which they always accepted.
 - The command lines take `argv`, configure logging in `main()` rather than on import, and reject a `--leads` or `--arms` value with an empty name.

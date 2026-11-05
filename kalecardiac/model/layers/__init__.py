@@ -26,14 +26,9 @@ from kalecardiac.model.layers.gaussian import (
     GaussianHead,
     GaussianPosterior,
     build_expert_fusion,
-    expert_groups,
-    hierarchical_experts,
-    mean_of_experts,
-    mixture_of_experts,
     prior_expert,
     product_of_experts,
     reparameterise,
-    wasserstein_barycenter,
 )
 from kalecardiac.model.layers.mlp import MLP
 from kalecardiac.model.layers.residual1d import ResidualBlock1d, ResidualConv1dEncoder
@@ -56,14 +51,9 @@ __all__ = [
     "build_expert_fusion",
     "conv_output_length",
     "conv_output_size",
-    "expert_groups",
-    "hierarchical_experts",
-    "mean_of_experts",
-    "mixture_of_experts",
     "prior_expert",
     "product_of_experts",
     "reparameterise",
-    "wasserstein_barycenter",
 ]
 
 

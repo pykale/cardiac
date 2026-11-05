@@ -143,24 +143,20 @@ so a source may apply it without knowing which split the subject landed in.
 
 ## `model.layers` — blocks that know no modality
 
-### Gaussian experts — the mathematical core
+### Gaussian experts — PyKale calculations, Cardiac model adapter
 
-All take `mean` and `log_var` of `(M, B, D)` and an optional `(M, B)` mask, and return a
-`GaussianPosterior`.
+Import `mixture_of_experts`, `mean_of_experts`, `hierarchical_experts`, `wasserstein_barycenter` and `expert_groups` directly from `kale.embed.multimodal_fusion`. PyKale fusion functions take `(M, B, D)` mean and log-variance tensors, accept an optional `(M, B)` mask, and return a `(mean, log_var)` tensor pair. KaleCardiac keeps its `GaussianPosterior` for encoders and models; `build_expert_fusion` converts PyKale results to that type.
 
 | Name | Combines by |
 | --- | --- |
 | `product_of_experts` | Precision-weighted product. Never less certain than any expert |
-| `mixture_of_experts` | Weighted parameter average. No expert dominates |
-| `mean_of_experts` | The equal-weight case |
-| `hierarchical_experts(..., num_groups)` | Product within groups, mixture across them (HiME) |
-| `wasserstein_barycenter` | Mean of means and of **standard deviations** |
-| `EXPERT_FUSIONS`, `build_expert_fusion(name, **kw)` | The registry, and construction by name |
-| `expert_groups(num_experts, num_groups)` | Contiguous grouping that uses **every** expert |
+| `EXPERT_FUSIONS`, `build_expert_fusion(name, **kw)` | Cardiac configuration names and a callable returning `GaussianPosterior` |
 | `prior_expert(shape)` | The standard-normal expert |
 | `reparameterise(mean, log_var)` | The differentiable sample. Always samples |
 | `GaussianPosterior` | `.mean`, `.log_var`, `.variance`, `.stddev`, `.sample()` |
 | `GaussianHead(in_features, latent_dim)` | Features to a posterior |
+
+For direct calculations, replace `from kalecardiac.model.layers import mixture_of_experts` with `from kale.embed.multimodal_fusion import mixture_of_experts`. The same import change applies to the other four shared functions. Code using Cardiac's model configuration names and `GaussianPosterior` continues to use `build_expert_fusion`.
 
 ### Backbones and decoders
 
