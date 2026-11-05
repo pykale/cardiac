@@ -107,6 +107,130 @@ class TestProductOfExperts:
         assert float(product_of_experts(mean, log_var, mask).mean) == pytest.approx(0.0, abs=1e-4)
 
 
+<<<<<<< HEAD
+=======
+class TestMixtureOfExperts:
+    def test_equals_the_arithmetic_mean_of_the_parameters(self, experts):
+        mean, log_var = experts
+        fused = mixture_of_experts(mean, log_var)
+        assert torch.allclose(fused.mean, mean.mean(dim=0), atol=1e-5)
+        assert torch.allclose(fused.log_var, log_var.mean(dim=0), atol=1e-5)
+
+    def test_mean_of_experts_is_the_unweighted_case(self, experts):
+        mean, log_var = experts
+        assert torch.allclose(mean_of_experts(mean, log_var).mean, mixture_of_experts(mean, log_var).mean)
+
+    def test_weights_are_normalised_internally(self, experts):
+        mean, log_var = experts
+        equal = mixture_of_experts(mean, log_var, weights=torch.ones(5))
+        scaled = mixture_of_experts(mean, log_var, weights=torch.full((5,), 7.0))
+        assert torch.allclose(equal.mean, scaled.mean)
+
+    def test_a_masked_expert_takes_no_share(self, experts):
+        mean, log_var = experts
+        mask = torch.ones(mean.shape[:2])
+        mask[0] = 0.0
+        assert torch.allclose(mixture_of_experts(mean, log_var, mask).mean, mean[1:].mean(dim=0), atol=1e-5)
+
+    def test_a_subject_with_nothing_present_is_finite(self, experts):
+        mean, log_var = experts
+        mask = torch.ones(mean.shape[:2])
+        mask[:, 0] = 0.0
+        fused = mixture_of_experts(mean, log_var, mask)
+        assert torch.isfinite(fused.mean).all()
+
+    def test_negative_weights_are_rejected(self, experts):
+        mean, log_var = experts
+        with pytest.raises(ValueError, match="non-negative"):
+            mixture_of_experts(mean, log_var, weights=torch.tensor([-1.0, 1, 1, 1, 1]))
+
+    def test_weights_of_the_wrong_shape_are_rejected(self, experts):
+        mean, log_var = experts
+        with pytest.raises(ValueError, match="weights must be"):
+            mixture_of_experts(mean, log_var, weights=torch.ones(3))
+
+
+class TestWassersteinBarycenter:
+    def test_averages_standard_deviations_not_variances(self):
+        # Two experts with variances 1 and 9: the barycenter's stddev is (1 + 3)/2 = 2,
+        # so its variance is 4 -- not the variance mean of 5.
+        mean = torch.zeros(2, 1, 1)
+        log_var = torch.tensor([[[0.0]], [[math.log(9.0)]]])
+        fused = wasserstein_barycenter(mean, log_var)
+        assert float(fused.variance) == pytest.approx(4.0, rel=1e-4)
+
+    def test_means_are_averaged(self, experts):
+        mean, log_var = experts
+        assert torch.allclose(wasserstein_barycenter(mean, log_var).mean, mean.mean(dim=0), atol=1e-5)
+
+    def test_a_masked_expert_takes_no_share(self, experts):
+        mean, log_var = experts
+        mask = torch.ones(mean.shape[:2])
+        mask[0] = 0.0
+        fused = wasserstein_barycenter(mean, log_var, mask)
+        assert torch.allclose(fused.mean, mean[1:].mean(dim=0), atol=1e-5)
+
+
+class TestExpertGroups:
+    def test_every_expert_lands_in_exactly_one_group(self):
+        for count in range(1, 20):
+            for groups in range(1, 6):
+                assignment = expert_groups(count, groups)
+                flattened = [index for group in assignment for index in group]
+                assert sorted(flattened) == list(range(count)), (count, groups)
+
+    def test_thirteen_experts_in_four_groups_keeps_all_thirteen(self):
+        # The reference implementation took four slices of 13 // 4 == 3 and silently
+        # discarded the thirteenth expert, which was the prior.
+        assignment = expert_groups(13, 4)
+        assert sum(len(group) for group in assignment) == 13
+        assert [len(group) for group in assignment] == [4, 3, 3, 3]
+
+    def test_groups_differ_in_size_by_at_most_one(self):
+        sizes = [len(group) for group in expert_groups(14, 4)]
+        assert max(sizes) - min(sizes) <= 1
+
+    def test_more_groups_than_experts_gives_one_each(self):
+        assert expert_groups(3, 10) == [[0], [1], [2]]
+
+    @pytest.mark.parametrize("count,groups", [(0, 2), (5, 0)])
+    def test_non_positive_arguments_are_rejected(self, count, groups):
+        with pytest.raises(ValueError):
+            expert_groups(count, groups)
+
+
+class TestHierarchicalExperts:
+    def test_one_group_reduces_to_a_product(self, experts):
+        mean, log_var = experts
+        fused = hierarchical_experts(mean, log_var, num_groups=1)
+        assert torch.allclose(fused.mean, product_of_experts(mean, log_var).mean, atol=1e-5)
+
+    def test_groups_of_one_reduce_to_the_parameter_average(self, experts):
+        mean, log_var = experts
+        fused = hierarchical_experts(mean, log_var, num_groups=mean.shape[0])
+        assert torch.allclose(fused.mean, mixture_of_experts(mean, log_var).mean, atol=1e-4)
+
+    def test_its_variance_is_between_product_and_parameter_average_for_these_experts(self, experts):
+        mean, log_var = experts
+        product = product_of_experts(mean, log_var).variance.mean()
+        mixture = mixture_of_experts(mean, log_var).variance.mean()
+        hierarchical = hierarchical_experts(mean, log_var, num_groups=2).variance.mean()
+        assert product <= hierarchical <= mixture
+
+    def test_a_group_contributes_if_any_of_its_experts_does(self, experts):
+        mean, log_var = experts
+        mask = torch.ones(mean.shape[:2])
+        mask[0] = 0.0
+        fused = hierarchical_experts(mean, log_var, mask, num_groups=2)
+        assert torch.isfinite(fused.mean).all()
+
+    def test_a_subject_with_nothing_present_is_finite(self, experts):
+        mean, log_var = experts
+        fused = hierarchical_experts(mean, log_var, torch.zeros(mean.shape[:2]), num_groups=2)
+        assert torch.isfinite(fused.mean).all()
+
+
+>>>>>>> origin/feature/pykale-fusion-adoption
 class TestPriorExpert:
     def test_is_the_standard_normal(self):
         mean, log_var = prior_expert((1, 4, 8))
@@ -208,6 +332,26 @@ class TestShapeValidation:
     def test_mismatched_mean_and_log_var_are_rejected(self):
         with pytest.raises(ValueError, match="same shape"):
             product_of_experts(torch.zeros(2, 3, 4), torch.zeros(2, 3, 5))
+
+    @pytest.mark.parametrize(
+        "fusion", [mixture_of_experts, mean_of_experts, wasserstein_barycenter, hierarchical_experts]
+    )
+    def test_core_backed_fusions_reject_invalid_inputs(self, fusion):
+        mean = torch.zeros(2, 1, 1)
+        with pytest.raises(TypeError, match="mean and log_var must be tensors"):
+            fusion([[0.0]], mean)
+        with pytest.raises(TypeError, match="mask must be a tensor"):
+            fusion(mean, mean, mask=[[1], [0]])
+        with pytest.raises(ValueError, match="zero or one"):
+            fusion(mean, mean, mask=torch.tensor([[0.5], [1.0]]))
+        with pytest.raises(TypeError, match="same floating dtype"):
+            fusion(mean, mean.double())
+
+    @pytest.mark.parametrize("fusion", [mixture_of_experts, wasserstein_barycenter])
+    def test_core_backed_averaging_rejects_nonfinite_weights(self, fusion):
+        mean = torch.zeros(2, 1, 1)
+        with pytest.raises(ValueError, match="finite"):
+            fusion(mean, mean, weights=torch.tensor([1.0, float("nan")]))
 
 
 class TestGaussianHead:
