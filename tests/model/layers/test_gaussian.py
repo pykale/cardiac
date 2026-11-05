@@ -1,7 +1,7 @@
 """Gaussian expert fusion: closed forms, masking, and the grouping fix.
 
-These are the mathematical properties the two cardiac models rest on, so they are
-checked against the closed forms rather than against a recorded output.
+PyKale tests the reusable Gaussian calculations. These tests cover Cardiac's
+posterior type, masked product and model fusion registry.
 """
 
 from __future__ import annotations
@@ -10,6 +10,7 @@ import math
 
 import pytest
 import torch
+from kale.embed.multimodal_fusion import hierarchical_experts, mixture_of_experts
 
 from kalecardiac.model.layers import (
     ABSENT_LOG_VAR,
@@ -17,14 +18,9 @@ from kalecardiac.model.layers import (
     GaussianHead,
     GaussianPosterior,
     build_expert_fusion,
-    expert_groups,
-    hierarchical_experts,
-    mean_of_experts,
-    mixture_of_experts,
     prior_expert,
     product_of_experts,
     reparameterise,
-    wasserstein_barycenter,
 )
 
 
@@ -111,6 +107,8 @@ class TestProductOfExperts:
         assert float(product_of_experts(mean, log_var, mask).mean) == pytest.approx(0.0, abs=1e-4)
 
 
+<<<<<<< HEAD
+=======
 class TestMixtureOfExperts:
     def test_equals_the_arithmetic_mean_of_the_parameters(self, experts):
         mean, log_var = experts
@@ -207,12 +205,12 @@ class TestHierarchicalExperts:
         fused = hierarchical_experts(mean, log_var, num_groups=1)
         assert torch.allclose(fused.mean, product_of_experts(mean, log_var).mean, atol=1e-5)
 
-    def test_groups_of_one_reduce_to_a_mixture(self, experts):
+    def test_groups_of_one_reduce_to_the_parameter_average(self, experts):
         mean, log_var = experts
         fused = hierarchical_experts(mean, log_var, num_groups=mean.shape[0])
         assert torch.allclose(fused.mean, mixture_of_experts(mean, log_var).mean, atol=1e-4)
 
-    def test_it_sits_between_a_product_and_a_mixture_in_certainty(self, experts):
+    def test_its_variance_is_between_product_and_parameter_average_for_these_experts(self, experts):
         mean, log_var = experts
         product = product_of_experts(mean, log_var).variance.mean()
         mixture = mixture_of_experts(mean, log_var).variance.mean()
@@ -232,6 +230,7 @@ class TestHierarchicalExperts:
         assert torch.isfinite(fused.mean).all()
 
 
+>>>>>>> origin/feature/pykale-fusion-adoption
 class TestPriorExpert:
     def test_is_the_standard_normal(self):
         mean, log_var = prior_expert((1, 4, 8))
@@ -245,6 +244,22 @@ class TestPriorExpert:
 
 
 class TestRegistry:
+    def test_weighted_mixture_matches_pykale_and_returns_a_posterior(self, experts):
+        mean, log_var = experts
+        weights = torch.arange(1, mean.shape[0] + 1, dtype=mean.dtype)
+        fused = build_expert_fusion("moe", weights=weights)(mean, log_var)
+        core_mean, core_log_var = mixture_of_experts(mean, log_var, weights=weights)
+        assert isinstance(fused, GaussianPosterior)
+        assert torch.equal(fused.mean, core_mean)
+        assert torch.equal(fused.log_var, core_log_var)
+
+    def test_hierarchical_group_option_is_forwarded_to_pykale(self, experts):
+        mean, log_var = experts
+        fused = build_expert_fusion("hime", num_groups=2)(mean, log_var)
+        core_mean, core_log_var = hierarchical_experts(mean, log_var, num_groups=2)
+        assert torch.equal(fused.mean, core_mean)
+        assert torch.equal(fused.log_var, core_log_var)
+
     @pytest.mark.parametrize("method", sorted(EXPERT_FUSIONS))
     def test_per_subject_masks_ignore_absent_experts_and_their_gradients(self, method):
         # Different subjects lose different experts in the same batch. Keep the
@@ -317,6 +332,26 @@ class TestShapeValidation:
     def test_mismatched_mean_and_log_var_are_rejected(self):
         with pytest.raises(ValueError, match="same shape"):
             product_of_experts(torch.zeros(2, 3, 4), torch.zeros(2, 3, 5))
+
+    @pytest.mark.parametrize(
+        "fusion", [mixture_of_experts, mean_of_experts, wasserstein_barycenter, hierarchical_experts]
+    )
+    def test_core_backed_fusions_reject_invalid_inputs(self, fusion):
+        mean = torch.zeros(2, 1, 1)
+        with pytest.raises(TypeError, match="mean and log_var must be tensors"):
+            fusion([[0.0]], mean)
+        with pytest.raises(TypeError, match="mask must be a tensor"):
+            fusion(mean, mean, mask=[[1], [0]])
+        with pytest.raises(ValueError, match="zero or one"):
+            fusion(mean, mean, mask=torch.tensor([[0.5], [1.0]]))
+        with pytest.raises(TypeError, match="same floating dtype"):
+            fusion(mean, mean.double())
+
+    @pytest.mark.parametrize("fusion", [mixture_of_experts, wasserstein_barycenter])
+    def test_core_backed_averaging_rejects_nonfinite_weights(self, fusion):
+        mean = torch.zeros(2, 1, 1)
+        with pytest.raises(ValueError, match="finite"):
+            fusion(mean, mean, weights=torch.tensor([1.0, float("nan")]))
 
 
 class TestGaussianHead:

@@ -4,7 +4,7 @@ Cardiac modalities are **incommensurable**. A ten-second twelve-lead recording i
 
 KaleCardiac fuses at two levels:
 
-- **Latent fusion** combines one Gaussian distribution per modality. It is used by `MultimodalVAE`, configured with `FUSION.LATENT_METHOD`, and implemented in `kalecardiac.model.layers.gaussian`.
+- **Latent fusion** combines one Gaussian distribution per modality. `MultimodalVAE` selects it with `FUSION.LATENT_METHOD`. PyKale implements the shared Gaussian calculations in `kale.embed.multimodal_fusion`; `kalecardiac.model.layers.gaussian` adapts their results to `GaussianPosterior` for Cardiac models.
 - **Embedding fusion** combines one vector per modality. It is used by `MultimodalPredictor`, configured with `FUSION.METHOD`, and implemented in `kalecardiac.model.embed.multimodal_fusion`.
 
 They are independent: either changes without the other.
@@ -15,7 +15,7 @@ They are independent: either changes without the other.
 
 Each modality's encoder proposes a diagonal Gaussian over a shared latent space. The question every multimodal VAE answers differently is: **given one Gaussian per modality, what is the joint posterior?**
 
-All five answers take the same shapes — `mean` and `log_var` of `(M, B, D)` for `M` experts, and an optional `(M, B)` mask — so swapping between them is a string.
+All five answers take the same shapes — `mean` and `log_var` of `(M, B, D)` for `M` experts, and an optional `(M, B)` mask — so Cardiac models swap between them with a configuration string. Call the shared methods directly from `kale.embed.multimodal_fusion` for a `(mean, log_var)` tensor pair; `build_expert_fusion` returns a `GaussianPosterior` for Cardiac models.
 
 ### Product of experts (`poe`)
 
@@ -43,17 +43,17 @@ joint mean         = sum(weight × expert mean)
 joint log-variance = sum(weight × expert log-variance)
 ```
 
-Averaging the parameters, not mixing the distributions: a true mixture of Gaussians is not Gaussian, and the moment-matched average is what keeps the KL term in closed form.
+Averaging means and log-variances gives one Gaussian for a closed-form KL term. This is neither a probability mixture of Gaussians nor a moment-matched approximation of one.
 
-**What follows:** no expert can dominate. A confident modality and an uninformative one contribute equally, which keeps a weak modality from being ignored — and keeps a noisy one from being discounted.
+**What follows:** with equal weights, a confident modality and an uninformative one contribute equally. Explicit weights can change their shares; confidence alone does not.
 
 **When it fits:** the modalities are of comparable reliability, or a product's tendency to be dominated by one over-confident encoder is the failure being avoided.
 
-`mean_of_experts` is the equal-weight case, named separately because it is the plainest possible fusion and therefore the baseline an ablation compares against.
+PyKale's `mean_of_experts` is the equal-weight case, named separately because it is the plainest possible fusion and therefore the baseline an ablation compares against.
 
 ### Hierarchical modality experts (`hime`)
 
-A product **within** contiguous groups of experts, then a mixture **across** the groups. LS-EMVAE's mechanism.
+A product **within** contiguous groups of experts, then an equal parameter average **across** the available group posteriors. LS-EMVAE's mechanism.
 
 For twelve leads with a prior and four groups, the groups are:
 
@@ -66,17 +66,11 @@ For twelve leads with a prior and four groups, the groups are:
 
 The four resulting group posteriors are averaged.
 
-**What follows:** the joint gains the sharpness of a product without letting one over-confident group determine the latent on its own. It sits between the two in certainty, which `tests/model/layers/test_gaussian.py` asserts directly:
+**What follows:** within each group, confident experts have more influence. The group means and log-variances then receive equal shares. PyKale tests two useful limiting cases: one group reduces to a product, and groups of one reduce to the parameter average.
 
-```python
-product_variance <= hierarchical_variance <= mixture_variance
-```
+**Grouping is contiguous over the expert axis**, so the order experts are stacked in decides which reinforce which. For an ECG in conventional lead order that puts the limb leads in the early groups and the precordial leads in the later ones, which is anatomically sensible. A different order is a different grouping, and therefore a modelling choice worth stating. A group whose experts are all absent takes no share of the average.
 
-Two degenerate cases are worth knowing, and both are tested: one group reduces to a product, and groups of one reduce to a mixture.
-
-**Grouping is contiguous over the expert axis**, so the order experts are stacked in decides which reinforce which. For an ECG in conventional lead order that puts the limb leads in the early groups and the precordial leads in the later ones, which is anatomically sensible. A different order is a different grouping, and therefore a modelling choice worth stating. A group whose experts are all absent takes no share of the mixture.
-
-> **A correction to the reference implementation.** Its grouping computed `group_size = M // num_groups` and took `num_groups` slices of that width, silently discarding the last `M % num_groups` experts. With twelve leads plus the prior and four groups that dropped the prior entirely. `expert_groups` distributes the remainder instead, so the group sizes are `[4, 3, 3, 3]` and every expert is used. See [models.md](models.md#documented-departures).
+> **A correction to the reference implementation.** Its grouping computed `group_size = M // num_groups` and took `num_groups` slices of that width, silently discarding the last `M % num_groups` experts. With twelve leads plus the prior and four groups that dropped the prior entirely. PyKale's `expert_groups` distributes the remainder instead, so the group sizes are `[4, 3, 3, 3]` and every expert is used. See [models.md](models.md#documented-departures).
 
 ### Wasserstein barycenter (`barycenter`)
 
@@ -87,7 +81,7 @@ joint mean               = sum(weight × expert mean)
 joint standard deviation = sum(weight × expert standard deviation)
 ```
 
-For diagonal Gaussians this is the 2-Wasserstein barycenter. It sits between the other two: unlike a product it cannot become more certain than its experts, and unlike a parameter-averaged mixture it averages in the scale a distance is measured in. Two experts with variances 1 and 9 give a barycenter variance of 4, not the variance mean of 5 — which the tests check directly.
+For diagonal Gaussians this is the 2-Wasserstein barycenter. Unlike a product, it cannot become more certain than every available expert; unlike a parameter average of log-variances, it averages in the scale a distance is measured in. Two equally weighted experts with variances 1 and 9 give a barycenter variance of 4, an arithmetic variance average of 5, and a log-variance parameter average corresponding to variance 3. PyKale tests the barycenter calculation directly.
 
 ### Choosing one
 
@@ -138,5 +132,4 @@ This is how a cardiac model is taught to survive its own deployment: a reduced-l
 
 - [models.md](models.md) — which fusion each published model uses
 - [architecture.md](architecture.md) — where the fusion stage sits in the pipeline
-- `tests/model/layers/test_gaussian.py` — every property above, asserted
-- [migration_contract.md](migration_contract.md) — public fusion and evaluation behavior to preserve during the PyKale migration
+- `tests/model/layers/test_gaussian.py` — Cardiac's posterior, masked product and model adapter; PyKale tests the shared Gaussian calculations

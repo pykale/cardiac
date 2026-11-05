@@ -232,7 +232,7 @@ experts 0 to 11 — **the thirteenth expert, the prior, was never used**. So the
 `use_prior` setting had no effect in the twelve-lead configuration, and a subject with
 no present lead had an undefined posterior.
 
-`expert_groups` distributes the remainder instead, so with thirteen experts and four
+PyKale's `expert_groups` distributes the remainder instead, so with thirteen experts and four
 groups the sizes are `[4, 3, 3, 3]` and every expert is used. `use_prior=False` fuses
 the leads alone, which is what the original effectively did.
 *Tested in* `tests/model/layers/test_gaussian.py::TestExpertGroups`.
