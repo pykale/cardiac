@@ -18,58 +18,64 @@ folds cannot be state belonging to one. scikit-learn draws the same line between
 ``model_selection`` and ``preprocessing``.
 """
 
+from typing import TYPE_CHECKING
+
 from kalecardiac.prepdata.ecg_transform import (
     DERIVABLE_LIMB_LEADS,
-    build_ecg_pipeline,
     derive_limb_leads,
-    lead_selector,
+    get_ecg_transform,
+    get_lead_selector,
+    interleave_leads,
     select_leads,
 )
 from kalecardiac.prepdata.image_transform import (
-    ImagePipeline,
-    as_image,
-    build_image_pipeline,
+    check_image,
+    get_image_transform,
+    normalize_image,
     resize_image,
-    scale_image,
-    standardise_image,
+    scale_image_intensity,
 )
 from kalecardiac.prepdata.signal_transform import (
     MIN_SCALE,
-    SignalPipeline,
-    as_signal,
-    clip_amplitude,
-    crop_or_pad,
-    interpolate_missing,
-    resample,
-    scale_amplitude,
-    standardise,
-    step_name,
+    check_signal,
+    clip_signal,
+    crop_or_pad_signal,
+    interpolate_signal,
+    normalize_signal,
+    resample_signal,
+    scale_signal,
 )
+from kalecardiac.utils.renames import renamed
 
 __all__ = [
     "DERIVABLE_LIMB_LEADS",
     "MIN_SCALE",
-    "ImagePipeline",
-    "SignalPipeline",
-    "as_image",
-    "as_signal",
-    "build_ecg_pipeline",
-    "build_image_pipeline",
-    "clip_amplitude",
-    "crop_or_pad",
+    "check_image",
+    "check_signal",
+    "clip_signal",
+    "crop_or_pad_signal",
     "derive_limb_leads",
-    "interpolate_missing",
-    "lead_selector",
-    "resample",
+    "get_ecg_transform",
+    "get_image_transform",
+    "get_lead_selector",
+    "interleave_leads",
+    "interpolate_signal",
+    "normalize_image",
+    "normalize_signal",
+    "resample_signal",
     "resize_image",
-    "scale_amplitude",
-    "scale_image",
+    "scale_image_intensity",
+    "scale_signal",
     "select_leads",
-    "standardise",
-    "standardise_image",
-    "step_name",
 ]
 
 
 def __dir__():
     return sorted(__all__)
+
+
+if not TYPE_CHECKING:
+    # At runtime only: a module-level __getattr__ that a type checker saw would make
+    # every misspelt import type-check.
+    def __getattr__(name: str):
+        raise renamed(__name__, name)

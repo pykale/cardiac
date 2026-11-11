@@ -1,6 +1,8 @@
-"""ECG access: lead naming, shape validation, and splitting a recording into leads."""
+"""ECG access: lead naming, shape validation, splitting a recording into leads, and DICOM ECGs."""
 
 from __future__ import annotations
+
+import pickle
 
 import numpy as np
 import pytest
@@ -14,23 +16,36 @@ from kalecardiac.loaddata import (
     ECGFileSource,
     ECGFormatError,
     LeadSource,
-    as_lead_array,
-    canonical_lead,
-    canonical_leads,
-    lead_indices,
-    lead_sources,
+    check_ecg_array,
+    get_lead_indices,
+    get_lead_sources,
+    normalize_lead_name,
+    normalize_lead_names,
+    read_dicom_ecg,
 )
 
 
 class TestLeadNaming:
-    @pytest.mark.parametrize("spelling", ["aVR", "AVR", "avr", "LEAD_aVR", "lead_AVR", " aVR "])
+    @pytest.mark.parametrize(
+        "spelling", ["aVR", "AVR", "avr", "LEAD_aVR", "lead_AVR", " aVR ", "Lead aVR", "lead  avr"]
+    )
     def test_spellings_canonicalise_to_one_name(self, spelling):
-        assert canonical_lead(spelling) == "aVR"
+        assert normalize_lead_name(spelling) == "aVR"
 
     def test_unknown_name_keeps_its_own_spelling(self):
         # A cohort may record a lead this package has never heard of; only the export
         # prefix is stripped.
-        assert canonical_lead("LEAD_X7") == "X7"
+        assert normalize_lead_name("LEAD_X7") == "X7"
+
+    def test_dicom_code_meanings_canonicalise(self):
+        names = ["Lead I (Einthoven)", "Lead II", "Lead III", "Lead aVL", "Lead aVF", "Lead V6"]
+        assert [normalize_lead_name(name) for name in names] == ["I", "II", "III", "aVL", "aVF", "V6"]
+
+    def test_a_qualifier_stays_on_a_name_that_is_not_a_standard_lead(self):
+        assert normalize_lead_name("Lead X7 (custom)") == "X7 (custom)"
+
+    def test_a_bare_prefix_is_not_stripped_to_nothing(self):
+        assert normalize_lead_name("Lead") == "Lead"
 
     def test_standard_order_is_limb_then_precordial(self):
         assert STANDARD_12_LEAD == LIMB_LEADS + PRECORDIAL_LEADS
@@ -38,44 +53,44 @@ class TestLeadNaming:
 
     def test_empty_lead_set_is_rejected(self):
         with pytest.raises(ECGFormatError, match="must declare its leads"):
-            canonical_leads([])
+            normalize_lead_names([])
 
     def test_two_spellings_of_one_lead_are_rejected(self):
         # Choosing which copy is real is the cohort's decision, not this function's.
         with pytest.raises(ECGFormatError, match="more than once"):
-            canonical_leads(["I", "LEAD_I"])
+            normalize_lead_names(["I", "LEAD_I"])
 
     def test_indices_follow_the_requested_order_not_storage_order(self):
-        assert lead_indices(STANDARD_12_LEAD, ["II", "I", "V6"]) == [1, 0, 11]
+        assert get_lead_indices(STANDARD_12_LEAD, ["II", "I", "V6"]) == [1, 0, 11]
 
     def test_missing_lead_is_named_in_the_error(self):
         with pytest.raises(ECGFormatError, match=r"\['V1'\]"):
-            lead_indices(LIMB_LEADS, ["I", "V1"])
+            get_lead_indices(LIMB_LEADS, ["I", "V1"])
 
 
 class TestLeadArrayCoercion:
     def test_transposes_a_samples_by_leads_recording(self):
-        array = as_lead_array(np.zeros((500, 12)), num_leads=12)
+        array = check_ecg_array(np.zeros((500, 12)), num_leads=12)
         assert array.shape == (12, 500)
 
     def test_leaves_a_leads_by_samples_recording_alone(self):
-        assert as_lead_array(np.zeros((12, 500)), num_leads=12).shape == (12, 500)
+        assert check_ecg_array(np.zeros((12, 500)), num_leads=12).shape == (12, 500)
 
     def test_accepts_one_dimensional_input_for_a_single_lead(self):
-        assert as_lead_array(np.zeros(500), num_leads=1).shape == (1, 500)
+        assert check_ecg_array(np.zeros(500), num_leads=1).shape == (1, 500)
 
     def test_rejects_one_dimensional_input_for_several_leads(self):
         with pytest.raises(ECGFormatError, match="1-D recording holds one lead"):
-            as_lead_array(np.zeros(500), num_leads=12)
+            check_ecg_array(np.zeros(500), num_leads=12)
 
     def test_square_recording_is_not_guessed_at(self):
         # 12x12 has an axis of length 12 either way; taking the first is the documented
         # behaviour, and it must not silently transpose.
-        assert as_lead_array(np.arange(144).reshape(12, 12), num_leads=12)[0, 1] == 1
+        assert check_ecg_array(np.arange(144).reshape(12, 12), num_leads=12)[0, 1] == 1
 
     def test_shape_with_no_matching_axis_is_rejected(self):
         with pytest.raises(ECGFormatError, match="no axis of length 12"):
-            as_lead_array(np.zeros((6, 500)), num_leads=12)
+            check_ecg_array(np.zeros((6, 500)), num_leads=12)
 
 
 class TestECGArraySource:
@@ -200,20 +215,26 @@ class TestECGFileSource:
         source.loader = lambda path: (reads.append(path), original(path))[1]
 
         identifier = cohort.subject_id[0]
-        for lead in lead_sources(source).values():
+        for lead in get_lead_sources(source).values():
             lead.get(identifier, 0)
         assert len(reads) == 1
 
     def test_unknown_extension_asks_for_a_loader(self, cohort, tmp_path):
-        path = tmp_path / "x.dcm"
+        path = tmp_path / "x.hea"
         path.write_bytes(b"")
         with pytest.raises(ECGFormatError, match="pass loader="):
+            ECGFileSource({"a": path}, leads=["I"])
+
+    def test_a_dicom_file_is_pointed_at_the_source_that_reads_its_lead_names(self, tmp_path):
+        path = tmp_path / "x.dcm"
+        path.write_bytes(b"")
+        with pytest.raises(ECGFormatError, match="ECGFileSource.from_dicom"):
             ECGFileSource({"a": path}, leads=["I"])
 
 
 class TestLeadSources:
     def test_each_lead_becomes_a_single_channel_modality(self, cohort, ecg_source):
-        sources = lead_sources(ecg_source)
+        sources = get_lead_sources(ecg_source)
         assert sorted(sources) == sorted(cohort.leads)
         for lead, source in sources.items():
             value = source.get(cohort.subject_id[0], 0)
@@ -226,11 +247,11 @@ class TestLeadSources:
             assert torch.equal(taken[0], full[index])
 
     def test_a_subset_can_be_requested_in_its_own_order(self, cohort, ecg_source):
-        sources = lead_sources(ecg_source, leads=["aVF", "I"])
+        sources = get_lead_sources(ecg_source, leads=["aVF", "I"])
         assert list(sources) == ["aVF", "I"]
 
     def test_prefix_names_a_second_recording(self, cohort, ecg_source):
-        sources = lead_sources(ecg_source, leads=["I"], prefix="rest_")
+        sources = get_lead_sources(ecg_source, leads=["I"], prefix="rest_")
         assert list(sources) == ["rest_I"]
 
     def test_absent_subject_stays_absent_per_lead(self, ecg_source):
@@ -255,7 +276,7 @@ class TestLeadSources:
 class TestEdgesAndDescriptions:
     def test_a_three_dimensional_recording_is_refused(self):
         with pytest.raises(ECGFormatError, match="expected a 2-D"):
-            as_lead_array(np.zeros((2, 3, 4)), 2)
+            check_ecg_array(np.zeros((2, 3, 4)), 2)
 
     def test_an_empty_source_takes_its_shape_from_the_declaration(self):
         source = ECGArraySource({}, leads=["I", "II"], length=50)
@@ -280,3 +301,153 @@ class TestEdgesAndDescriptions:
         np.save(tmp_path / "s1.npy", np.zeros((2, 50), dtype=np.float32))
         files = ECGFileSource({"s1": tmp_path / "s1.npy"}, leads=["I", "II"])
         assert repr(files).startswith("ECGFileSource(1 subjects | leads=['I', 'II']")
+
+
+# --------------------------------------------------------------------------- #
+# DICOM
+# --------------------------------------------------------------------------- #
+
+#: A twelve-lead recording in millivolts, each lead a different waveform.
+RECORDING = np.random.default_rng(0).normal(scale=0.5, size=(12, 100))
+
+#: The limb leads with aVF stored before aVL, as some exports store them.
+SWAPPED = ["I", "II", "III", "aVR", "aVF", "aVL", *PRECORDIAL_LEADS]
+
+
+def rewrite_channels(path, change) -> None:
+    """Apply ``change`` to every channel of a written DICOM ECG's recorded group."""
+    import pydicom
+
+    dataset = pydicom.dcmread(path)
+    for channel in dataset.WaveformSequence[0].ChannelDefinitionSequence:
+        change(channel)
+    dataset.save_as(path)
+
+
+class TestReadDicomECG:
+    def test_reads_the_recording_with_its_leads_and_rate(self, dicom_writers, tmp_path):
+        path = dicom_writers.write_dicom_ecg(tmp_path / "e.dcm", RECORDING, STANDARD_12_LEAD, sampling_rate=250)
+        recording, leads, rate = read_dicom_ecg(path)
+        assert (leads, rate, recording.dtype) == (STANDARD_12_LEAD, 250.0, np.float32)
+        # Stored in 5 microvolt steps, so read back to within half of one.
+        assert np.abs(recording - RECORDING).max() <= 0.0025 + 1e-6
+
+    @pytest.mark.parametrize(("unit", "sensitivity"), [("uV", 5.0), ("mV", 0.005), ("V", 5e-6)])
+    def test_every_voltage_comes_back_in_millivolts(self, dicom_writers, tmp_path, unit, sensitivity):
+        path = dicom_writers.write_dicom_ecg(
+            tmp_path / "e.dcm", RECORDING, STANDARD_12_LEAD, unit=unit, sensitivity=sensitivity
+        )
+        assert np.abs(read_dicom_ecg(path)[0] - RECORDING).max() <= 0.0025 + 1e-6
+
+    def test_the_recorded_group_is_read_rather_than_a_derived_one_ahead_of_it(self, dicom_writers, tmp_path):
+        path = dicom_writers.write_dicom_ecg(tmp_path / "e.dcm", RECORDING, STANDARD_12_LEAD, median_beat=True)
+        assert read_dicom_ecg(path)[0].shape == (12, 100)
+        assert read_dicom_ecg(path, group=0)[0].shape == (12, 10)
+
+    def test_a_group_that_does_not_exist_is_named(self, dicom_writers, tmp_path):
+        path = dicom_writers.write_dicom_ecg(tmp_path / "e.dcm", RECORDING, STANDARD_12_LEAD)
+        with pytest.raises(ECGFormatError, match="holds 1 waveform group"):
+            read_dicom_ecg(path, group=1)
+
+    def test_a_dicom_without_a_waveform_is_not_an_ecg(self, dicom_writers, tmp_path):
+        path = dicom_writers.write_dicom_image(tmp_path / "x.dcm", np.zeros((4, 4)))
+        with pytest.raises(ECGFormatError, match="holds no waveform: it is Computed Radiography Image Storage"):
+            read_dicom_ecg(path)
+
+    def test_a_unit_that_is_not_a_voltage_is_refused(self, dicom_writers, tmp_path):
+        path = dicom_writers.write_dicom_ecg(tmp_path / "e.dcm", RECORDING, STANDARD_12_LEAD, unit="mm[Hg]")
+        with pytest.raises(ECGFormatError, match=r"'mm\[Hg\]', which is not a voltage"):
+            read_dicom_ecg(path)
+
+    def test_a_channel_stating_no_sensitivity_is_read_as_stored(self, dicom_writers, tmp_path):
+        path = dicom_writers.write_dicom_ecg(tmp_path / "e.dcm", RECORDING, STANDARD_12_LEAD, sensitivity=5.0)
+        rewrite_channels(path, lambda channel: delattr(channel, "ChannelSensitivity"))
+        stored = read_dicom_ecg(path)[0]
+        # The whole numbers the file holds, one per 5 microvolt step, unconverted.
+        assert np.array_equal(stored, np.round(stored))
+        assert np.abs(stored - RECORDING / 0.005).max() <= 0.5 + 1e-6
+
+    def test_a_channel_named_only_by_its_label_is_read(self, dicom_writers, tmp_path):
+        path = dicom_writers.write_dicom_ecg(tmp_path / "e.dcm", RECORDING, STANDARD_12_LEAD)
+
+        def label_only(channel):
+            channel.ChannelLabel = channel.ChannelSourceSequence[0].CodeMeaning.split(" (")[0]
+            del channel.ChannelSourceSequence
+
+        rewrite_channels(path, label_only)
+        assert read_dicom_ecg(path)[1] == STANDARD_12_LEAD
+
+    def test_a_channel_naming_no_lead_is_refused_by_file(self, dicom_writers, tmp_path):
+        path = dicom_writers.write_dicom_ecg(tmp_path / "e.dcm", RECORDING, STANDARD_12_LEAD)
+        rewrite_channels(path, lambda channel: delattr(channel, "ChannelSourceSequence"))
+        with pytest.raises(ECGFormatError, match=r"e\.dcm: a channel names no lead"):
+            read_dicom_ecg(path)
+
+    def test_two_channels_naming_one_lead_are_refused_by_file(self, dicom_writers, tmp_path):
+        path = dicom_writers.write_dicom_ecg(tmp_path / "e.dcm", RECORDING[:2], ["I", "I"])
+        with pytest.raises(ECGFormatError, match=r"e\.dcm: lead names \['I'\] appear more than once"):
+            read_dicom_ecg(path)
+
+
+class TestECGFileSourceFromDicom:
+    @pytest.fixture
+    def written(self, dicom_writers, tmp_path):
+        return dicom_writers.write_synthetic_dicom_cohort(
+            tmp_path, num_subjects=3, num_samples=100, sampling_rate=100, with_labels=False
+        )
+
+    def test_subjects_leads_and_rate_come_from_the_files(self, written, tmp_path):
+        source = ECGFileSource.from_dicom(tmp_path / "ECG")
+        assert sorted(source.paths) == sorted(written.subject_id)
+        assert (source.leads, source.sampling_rate, source.length) == (STANDARD_12_LEAD, 100.0, 100)
+        subject = written.subject_id[1]
+        assert np.abs(source.get(subject, 1).numpy() - written.ecg[subject]).max() <= 0.0025 + 1e-6
+
+    def test_select_takes_leads_by_name_in_the_order_asked(self, written, tmp_path):
+        source = ECGFileSource.from_dicom(tmp_path / "ECG", select=["V1", "I"])
+        subject = written.subject_id[0]
+        assert np.allclose(source.get(subject, 0).numpy(), written.ecg[subject][[6, 0]], atol=0.003)
+
+    def test_every_subject_is_read_in_the_first_subjects_lead_order(self, dicom_writers, tmp_path):
+        # The same recording, exported once in the clinical order and once with aVF before
+        # aVL: matching the leads by position would transpose those two.
+        dicom_writers.write_dicom_ecg(tmp_path / "a" / "e.dcm", RECORDING, STANDARD_12_LEAD)
+        stored = RECORDING[[STANDARD_12_LEAD.index(lead) for lead in SWAPPED]]
+        dicom_writers.write_dicom_ecg(tmp_path / "b" / "e.dcm", stored, SWAPPED)
+        source = ECGFileSource.from_dicom(tmp_path)
+        assert source.leads == STANDARD_12_LEAD
+        assert torch.equal(source.get("a", 0), source.get("b", 1))
+
+    def test_a_subject_recorded_at_another_rate_is_named(self, dicom_writers, tmp_path):
+        dicom_writers.write_dicom_ecg(tmp_path / "a" / "e.dcm", RECORDING, STANDARD_12_LEAD, sampling_rate=100)
+        dicom_writers.write_dicom_ecg(tmp_path / "b" / "e.dcm", RECORDING, STANDARD_12_LEAD, sampling_rate=50)
+        source = ECGFileSource.from_dicom(tmp_path)
+        with pytest.raises(ECGFormatError, match=r"b is sampled at 50 Hz and the cohort's first subject at 100 Hz"):
+            source.get("b", 1)
+
+    def test_a_subject_missing_a_lead_is_named(self, dicom_writers, tmp_path):
+        dicom_writers.write_dicom_ecg(tmp_path / "a" / "e.dcm", RECORDING, STANDARD_12_LEAD)
+        dicom_writers.write_dicom_ecg(tmp_path / "b" / "e.dcm", RECORDING[:11], STANDARD_12_LEAD[:11])
+        source = ECGFileSource.from_dicom(tmp_path)
+        with pytest.raises(ECGFormatError, match=r"b.*: leads \['V6'\] are not in this recording"):
+            source.get("b", 1)
+
+    def test_the_transform_may_interleave_the_leads(self, written, tmp_path):
+        from kalecardiac.prepdata import get_ecg_transform
+
+        source = ECGFileSource.from_dicom(tmp_path / "ECG", transform=get_ecg_transform(length=100, interleave=True))
+        assert (source.channels, source.length) == (1, 1200)
+
+    def test_the_rate_recorded_as_provenance_can_be_declared(self, written, tmp_path):
+        source = ECGFileSource.from_dicom(tmp_path / "ECG", sampling_rate=500.0)
+        assert source.provenance(written.subject_id[0], 0)["sampling_rate"] == 500.0
+
+    def test_the_source_pickles_into_a_spawned_worker(self, written, tmp_path):
+        source = ECGFileSource.from_dicom(tmp_path / "ECG")
+        restored = pickle.loads(pickle.dumps(source))
+        subject = written.subject_id[2]
+        assert torch.equal(restored.get(subject, 2), source.get(subject, 2))
+
+    def test_a_folder_holding_no_subject_is_named(self, tmp_path):
+        with pytest.raises(ECGFormatError, match="no subject folder or .dcm file"):
+            ECGFileSource.from_dicom(tmp_path)

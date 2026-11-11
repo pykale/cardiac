@@ -86,8 +86,8 @@ class GaussianPosterior:
         return torch.exp(0.5 * self.log_var)
 
     def sample(self, generator: torch.Generator | None = None) -> Tensor:
-        """Draw one sample with the reparameterisation trick; see :func:`reparameterise`."""
-        return reparameterise(self.mean, self.log_var, generator=generator)
+        """Draw one sample with the reparameterisation trick; see :func:`reparameterize`."""
+        return reparameterize(self.mean, self.log_var, generator=generator)
 
     def detach(self) -> GaussianPosterior:
         """A copy detached from the graph, for interpretation or logging."""
@@ -98,7 +98,7 @@ class GaussianPosterior:
         return GaussianPosterior(self.mean.to(device), self.log_var.to(device))
 
 
-def reparameterise(mean: Tensor, log_var: Tensor, generator: torch.Generator | None = None) -> Tensor:
+def reparameterize(mean: Tensor, log_var: Tensor, generator: torch.Generator | None = None) -> Tensor:
     """Sample from ``N(mean, exp(log_var))`` so that the draw is differentiable.
 
     ``z = mean + eps * std`` with ``eps ~ N(0, 1)``: the randomness is an input rather

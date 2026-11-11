@@ -9,14 +9,9 @@ import torch
 
 from kalecardiac.model.layers import GaussianPosterior
 from kalecardiac.model.predict import (
-    binary_cross_entropy,
-    class_weight_from_labels,
-    cross_entropy,
     elbo_loss,
     gaussian_kl_divergence,
     latent_alignment_loss,
-    mean_squared_error,
-    positive_weight_from_labels,
     reconstruction_loss,
 )
 
@@ -216,63 +211,3 @@ class TestLatentAlignment:
     def test_no_modality_gives_zero(self):
         joint = GaussianPosterior(torch.zeros(4, 8), torch.zeros(4, 8))
         assert float(latent_alignment_loss({}, joint)) == 0.0
-
-
-class TestDiscriminativeLosses:
-    def test_binary_cross_entropy_on_a_confident_correct_prediction_is_small(self):
-        logits = torch.tensor([10.0, -10.0])
-        targets = torch.tensor([1.0, 0.0])
-        assert float(binary_cross_entropy(logits, targets)) < 1e-3
-
-    def test_binary_cross_entropy_accepts_a_trailing_axis(self):
-        flat = binary_cross_entropy(torch.tensor([0.5, -0.5]), torch.tensor([1.0, 0.0]))
-        column = binary_cross_entropy(torch.tensor([[0.5], [-0.5]]), torch.tensor([1.0, 0.0]))
-        assert float(flat) == pytest.approx(float(column))
-
-    def test_a_positive_weight_raises_the_cost_of_a_missed_positive(self):
-        logits = torch.tensor([-5.0, 5.0])
-        targets = torch.tensor([1.0, 0.0])
-        plain = binary_cross_entropy(logits, targets)
-        weighted = binary_cross_entropy(logits, targets, pos_weight=torch.tensor(5.0))
-        assert float(weighted) > float(plain)
-
-    def test_cross_entropy_handles_float_targets_from_a_numeric_column(self):
-        logits = torch.randn(4, 3)
-        assert math.isfinite(float(cross_entropy(logits, torch.tensor([0.0, 1.0, 2.0, 1.0]))))
-
-    def test_cross_entropy_needs_more_than_one_column(self):
-        with pytest.raises(ValueError, match="num_classes >= 2"):
-            cross_entropy(torch.randn(4, 1), torch.zeros(4))
-
-    def test_mean_squared_error_is_zero_on_a_perfect_prediction(self):
-        targets = torch.randn(8)
-        assert float(mean_squared_error(targets, targets)) == pytest.approx(0.0, abs=1e-6)
-
-    def test_mean_squared_error_accepts_a_trailing_axis(self):
-        targets = torch.randn(8)
-        assert float(mean_squared_error(targets.unsqueeze(1), targets)) == pytest.approx(0.0, abs=1e-6)
-
-
-class TestClassWeights:
-    def test_positive_weight_is_the_negative_to_positive_ratio(self):
-        labels = torch.tensor([0.0] * 30 + [1.0] * 10)
-        assert float(positive_weight_from_labels(labels)) == pytest.approx(3.0)
-
-    def test_positive_weight_survives_a_split_with_no_positives(self):
-        assert float(positive_weight_from_labels(torch.zeros(10))) == 1.0
-
-    def test_class_weights_favour_the_rare_class(self):
-        weights = class_weight_from_labels(torch.tensor([0] * 30 + [1] * 10), num_classes=2)
-        assert float(weights[1]) > float(weights[0])
-
-    def test_class_weights_are_normalised_to_mean_one(self):
-        weights = class_weight_from_labels(torch.tensor([0] * 30 + [1] * 10 + [2] * 20), num_classes=3)
-        assert float(weights.mean()) == pytest.approx(1.0)
-
-    def test_an_absent_class_gets_weight_one_not_infinity(self):
-        weights = class_weight_from_labels(torch.tensor([0, 0, 1]), num_classes=3)
-        assert torch.isfinite(weights).all()
-
-    def test_fewer_than_two_classes_is_rejected(self):
-        with pytest.raises(ValueError, match="at least 2"):
-            class_weight_from_labels(torch.zeros(4), num_classes=1)

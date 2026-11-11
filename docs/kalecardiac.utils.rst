@@ -17,3 +17,10 @@ kalecardiac.utils.seed
 .. automodule:: kalecardiac.utils.seed
    :members:
    :show-inheritance:
+
+kalecardiac.utils.renames
+-------------------------
+
+.. automodule:: kalecardiac.utils.renames
+   :members:
+   :show-inheritance:

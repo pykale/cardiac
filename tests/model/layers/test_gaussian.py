@@ -20,7 +20,7 @@ from kalecardiac.model.layers import (
     build_expert_fusion,
     prior_expert,
     product_of_experts,
-    reparameterise,
+    reparameterize,
 )
 
 
@@ -43,17 +43,17 @@ class TestGaussianPosterior:
 
 class TestReparameterise:
     def test_output_has_the_shape_of_the_mean(self):
-        assert reparameterise(torch.zeros(4, 8), torch.zeros(4, 8)).shape == (4, 8)
+        assert reparameterize(torch.zeros(4, 8), torch.zeros(4, 8)).shape == (4, 8)
 
     def test_zero_variance_returns_the_mean(self):
         mean = torch.randn(4, 8)
-        sample = reparameterise(mean, torch.full((4, 8), -60.0))
+        sample = reparameterize(mean, torch.full((4, 8), -60.0))
         assert torch.allclose(sample, mean, atol=1e-6)
 
     def test_gradients_flow_to_both_parameters(self):
         mean = torch.zeros(4, 8, requires_grad=True)
         log_var = torch.zeros(4, 8, requires_grad=True)
-        reparameterise(mean, log_var).sum().backward()
+        reparameterize(mean, log_var).sum().backward()
         assert mean.grad is not None and log_var.grad is not None
         # The mean's gradient is exactly one; the trick's whole point.
         assert torch.allclose(mean.grad, torch.ones_like(mean))
@@ -62,12 +62,12 @@ class TestReparameterise:
         # A documented departure from the reference implementations, which returned the
         # mean whenever the module was not training and so silently changed the ELBO.
         mean, log_var = torch.zeros(1000, 4), torch.zeros(1000, 4)
-        assert not torch.allclose(reparameterise(mean, log_var), mean)
+        assert not torch.allclose(reparameterize(mean, log_var), mean)
 
     def test_a_generator_makes_a_draw_reproducible(self):
         mean, log_var = torch.zeros(4, 8), torch.zeros(4, 8)
-        first = reparameterise(mean, log_var, generator=torch.Generator().manual_seed(1))
-        second = reparameterise(mean, log_var, generator=torch.Generator().manual_seed(1))
+        first = reparameterize(mean, log_var, generator=torch.Generator().manual_seed(1))
+        second = reparameterize(mean, log_var, generator=torch.Generator().manual_seed(1))
         assert torch.equal(first, second)
 
 
@@ -208,6 +208,15 @@ class TestShapeValidation:
     def test_mismatched_mean_and_log_var_are_rejected(self):
         with pytest.raises(ValueError, match="same shape"):
             product_of_experts(torch.zeros(2, 3, 4), torch.zeros(2, 3, 5))
+
+    def test_non_tensor_parameters_are_rejected(self):
+        with pytest.raises(TypeError, match="must be tensors"):
+            product_of_experts([[[0.0]]], torch.zeros(1, 1, 1))
+
+    def test_a_non_tensor_mask_is_rejected(self, experts):
+        mean, log_var = experts
+        with pytest.raises(TypeError, match="mask must be a tensor"):
+            product_of_experts(mean, log_var, [[1.0] * mean.shape[1]] * mean.shape[0])
 
 
 class TestGaussianHead:

@@ -5,7 +5,12 @@
 graft tests
 graft examples
 graft docs
+graft tutorials
 include AGENTS.md API_overview.md
 
 prune outputs
-global-exclude __pycache__ *.py[cod] *.npy *.npz *.pt *.pth *.ckpt *.dcm *.edf *.hea *.dat
+# The tutorials run from their own folder, so that is where they download and unpack their
+# dataset and write their runs; none of it belongs in a distribution.
+prune tutorials/*/data
+prune tutorials/*/outputs
+global-exclude __pycache__ *.py[cod] *.npy *.npz *.pt *.pth *.ckpt *.dcm *.edf *.hea *.dat *.zip

@@ -17,7 +17,7 @@ from kalecardiac.loaddata import (
     SubjectSample,
     check_target,
     collate_subjects,
-    lead_sources,
+    get_lead_sources,
 )
 
 
@@ -190,7 +190,7 @@ def test_ecg_and_image_cohorts_are_the_same_class(cohort, ecg_source, image_sour
     """Adding a modality is a dictionary entry, never a new dataset class."""
     unimodal = MultimodalDataset(cohort.subject_id, {"ecg": ecg_source}, target=label_target)
     bimodal = MultimodalDataset(cohort.subject_id, {"ecg": ecg_source, "image": image_source}, target=label_target)
-    per_lead = MultimodalDataset(cohort.subject_id, lead_sources(ecg_source), target=label_target)
+    per_lead = MultimodalDataset(cohort.subject_id, get_lead_sources(ecg_source), target=label_target)
     assert type(unimodal) is type(bimodal) is type(per_lead)
     assert len(unimodal[0].modalities) == 1
     assert len(bimodal[0].modalities) == 2
@@ -229,3 +229,38 @@ class TestArraySourceShapeAndDescriptions:
         assert repr(MultimodalDataset(["s1"], {"clinical": source}, target=target)) == (
             "MultimodalDataset(1 subjects | clinical=ArraySource)"
         )
+
+
+class TestFromArrays:
+    """A cohort straight from aligned tensors, as PyKale's SignalImageDataset takes them."""
+
+    def test_each_array_becomes_a_modality_and_subjects_are_numbered(self):
+        dataset = MultimodalDataset.from_arrays({"signal": torch.zeros(3, 1, 50), "image": torch.zeros(3, 1, 8, 8)})
+        assert len(dataset) == 3 and dataset.identifiers == ["0", "1", "2"]
+        sample = dataset[2]
+        assert sample.modalities["signal"].shape == (1, 50) and sample.modalities["image"].shape == (1, 8, 8)
+        assert all(bool(flag) for flag in sample.present.values())
+        assert sample.target == {}
+
+    def test_targets_and_identifiers_are_carried(self):
+        dataset = MultimodalDataset.from_arrays(
+            {"signal": np.arange(6, dtype=np.float32).reshape(3, 1, 2)},
+            targets={"label": [0, 1, 1]},
+            identifiers=["a", "b", "c"],
+        )
+        batch = collate_subjects([dataset[index] for index in range(3)])
+        assert batch.subject_id == ["a", "b", "c"]
+        assert batch.target["label"].tolist() == [0.0, 1.0, 1.0]
+        assert batch.modalities["signal"][2, 0].tolist() == [4.0, 5.0]
+
+    def test_no_modality_is_refused(self):
+        with pytest.raises(ValueError, match="at least one modality"):
+            MultimodalDataset.from_arrays({})
+
+    def test_arrays_of_different_lengths_are_refused(self):
+        with pytest.raises(ValueError, match="same number of subjects"):
+            MultimodalDataset.from_arrays({"signal": np.zeros((3, 4))}, targets={"label": [0, 1]})
+
+    def test_identifiers_must_match_the_subjects(self):
+        with pytest.raises(ValueError, match="2 identifiers for 3 subjects"):
+            MultimodalDataset.from_arrays({"signal": np.zeros((3, 4))}, identifiers=["a", "b"])

@@ -54,7 +54,8 @@ ALLOWED_IMPORTS = {
     "evaluate": {"utils", "loaddata", "model"},
     "pipeline": {"utils", "loaddata", "prepdata", "model", "evaluate"},
     "interpret": {"utils", "loaddata", "prepdata", "model", "evaluate"},
-    "auto": {"utils", "loaddata", "prepdata", "model", "evaluate", "pipeline", "interpret"},
+    # The one stage that reads a configuration, so the one that may import its schema.
+    "auto": {"utils", "loaddata", "prepdata", "model", "evaluate", "pipeline", "interpret", "config"},
     "config": set(),
 }
 
@@ -132,7 +133,7 @@ class TestStageDependencies:
 class TestPublicApi:
     @pytest.mark.parametrize(
         "module",
-        ["loaddata", "prepdata", "model", "pipeline", "evaluate", "interpret", "utils"],
+        ["loaddata", "prepdata", "model", "pipeline", "evaluate", "interpret", "utils", "auto"],
     )
     def test_every_exported_name_exists(self, module):
         imported = __import__(f"kalecardiac.{module}", fromlist=["__all__"])
@@ -156,6 +157,14 @@ class TestPublicApi:
         # The lazy-import hook must not try to import an arbitrary name as a submodule.
         with pytest.raises(AttributeError, match="no attribute"):
             _ = kalecardiac.nonexistent
+
+    def test_a_stage_is_imported_on_first_access(self, monkeypatch):
+        # Other tests import every stage, which binds it to the package; unbind one so
+        # the access goes through the lazy hook rather than finding the attribute.
+        import sys
+
+        monkeypatch.delattr(kalecardiac, "auto")
+        assert kalecardiac.auto is sys.modules["kalecardiac.auto"]
 
     def test_the_version_is_readable(self):
         assert re.match(r"^\d+\.\d+\.\d+", kalecardiac.__version__)
@@ -188,7 +197,7 @@ class TestDocstringsAndTyping:
 class TestTestsMirrorThePackage:
     def test_every_stage_has_a_test_directory(self):
         tests = Path(__file__).parent
-        for stage in ("loaddata", "prepdata", "model", "pipeline", "evaluate", "interpret", "utils"):
+        for stage in ("loaddata", "prepdata", "model", "pipeline", "evaluate", "interpret", "utils", "auto"):
             assert (tests / stage).is_dir(), f"no tests/{stage}/ mirroring kalecardiac/{stage}/"
 
     def test_the_library_never_imports_the_examples(self):

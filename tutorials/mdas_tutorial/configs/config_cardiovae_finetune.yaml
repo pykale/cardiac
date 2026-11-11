@@ -1,0 +1,33 @@
+# Fine-tuning in the tutorial (tutorial-CardioVAE.ipynb). Fine-tuning starts from the pretrained
+# model, so the notebook starts from the pretraining configuration and merges this onto it: the
+# leads, lengths and image size stay the ones the pretrained encoders were built for, and only
+# what fine-tuning changes is set here.
+DATASET:
+  # The labelled cohort: the pretraining layout, plus labels.csv of subject_id,label.
+  ROOT: "data/kalecardiac_finetuning"
+  # One held-out test split, stratified by label. The validation subjects, which choose the
+  # checkpoint, are carved out of the rest -- never out of the test split.
+  SPLIT_MODE: "random"
+  TEST_RATIO: 0.2
+  VAL_RATIO: 0.2
+
+ENDPOINT:
+  # The class labels.csv records: 0 healthy, 1 cardiothoracic abnormality.
+  NAME: "cardiothoracic_abnormality"
+  LABEL_COLUMN: "label"
+
+MODEL:
+  # The pretrained encoders stay frozen; a head with one hidden layer learns the endpoint.
+  FREEZE_ENCODERS: true
+  HEAD_HIDDEN: [128]
+
+SOLVER:
+  SEED: 42
+
+FINETUNE:
+  MAX_EPOCHS: 20
+  BASE_LR: 0.001
+  BATCH_SIZE: 4
+
+OUTPUT:
+  OUT_DIR: "outputs/finetuning"

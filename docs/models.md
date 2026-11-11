@@ -127,7 +127,7 @@ CardioVAE(
 
 The fusion is an argument here exactly as it is for `LSEMVAE`, so ablating CardioVAE's
 product of experts is `FUSION.LATENT_METHOD moe` in the example rather than another
-model. `kernel_size` sets both convolutional encoders, as `MODEL.KERNEL_SIZE`.
+model. `kernel_size` sets every convolution, encoders and decoders, as `MODEL.KERNEL_SIZE`.
 
 | Component | Where it is |
 | --- | --- |
@@ -146,10 +146,24 @@ two controls, and KL annealing is the third.
 `kale.embed.multimodal_encoder.SignalImageVAE`, with
 `kale.pipeline.multimodal_trainer.SignalImageTriStreamVAETrainer` for its objective.
 `CardioVAE` built with the default arguments is the same architecture parameter for
-parameter, and differs in three ways that follow from being a library component: the
-signal length, image size and channel widths are arguments; the modalities are named,
-so a third is a dictionary entry; and missing modalities are carried per subject by a
-mask rather than by passing `None` for a whole batch.
+parameter -- the decoders included, which use PyKale's kernel-3 transposed convolutions
+-- and differs in three ways that follow from being a library component: the signal
+length, image size and channel widths are arguments; the modalities are named, so a
+third is a dictionary entry; and missing modalities are carried per subject by a mask
+rather than by passing `None` for a whole batch.
+
+**The published weights load.** `CardioVAE.load_pykale_state_dict` reads a checkpoint
+saved from PyKale's `SignalImageVAE` or from the reference implementation, so the
+pretrained CardioVAE that PyKale's cardiac tutorial fine-tunes from is fine-tuned here
+unchanged:
+
+```python
+model = CardioVAE(latent_dim=256)  # signal_length=60000, image_size=(224, 224)
+model.load_pykale_state_dict(torch.load("CardioVAE.pth", map_location="cpu"))
+```
+
+Loaded into both models, the same weights give identical encoder and decoder outputs,
+and a fused posterior that agrees to floating-point rounding.
 
 ### Documented departure
 
@@ -193,7 +207,7 @@ Three pieces carry it:
 
 | Piece | Where it is | What it buys |
 | --- | --- | --- |
-| **Lead-specific encoders** | `lead_sources()` + one `VariationalEncoder` per lead | An encoder that keeps working when the other leads are absent |
+| **Lead-specific encoders** | `get_lead_sources()` + one `VariationalEncoder` per lead | An encoder that keeps working when the other leads are absent |
 | **Hierarchical expert fusion (HiME)** | `hierarchical_experts` | Leads seeing related territory reinforce one another, without one group determining the latent alone |
 | **Shared decoder** | the same module under every key | Forces the latent to carry lead-agnostic cardiac state, rather than letting each lead hide information in a private decoder |
 | **Latent alignment** | `latent_alignment_loss`, via `OBJECTIVE.ALIGNMENT_WEIGHT` | Every lead's representation readable in the same coordinates, which is what makes fine-tuning on a lead *subset* work |

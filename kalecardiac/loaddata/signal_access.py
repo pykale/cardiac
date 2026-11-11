@@ -10,13 +10,15 @@ Two sources cover where recordings come from:
 
 * :class:`ECGArraySource` for arrays already in memory, which is what a preprocessed
   cohort and every synthetic fixture look like;
-* :class:`ECGFileSource` for one file per subject, read in the DataLoader worker.
+* :class:`ECGFileSource` for one file per subject, read in the DataLoader worker -- and,
+  with :meth:`ECGFileSource.from_dicom`, for a folder of DICOM ECG exports, whose
+  headers name every lead, so the names are read rather than declared.
 
 and :class:`LeadSource` turns either of them into *one lead*, which is the mechanism
 behind treating each lead as its own modality::
 
     >>> ecg = ECGArraySource({"s1": np.zeros((3, 500))}, leads=["I", "II", "V1"])
-    >>> sources = lead_sources(ecg)
+    >>> sources = get_lead_sources(ecg)
     >>> sorted(sources)
     ['I', 'II', 'V1']
     >>> sources["V1"].get("s1", 0).shape
@@ -28,13 +30,15 @@ and nothing downstream knows the modalities happen to be leads.
 
 **Lead names are matched case-insensitively and without a ``LEAD_`` prefix**, because
 the same lead is written ``aVR``, ``AVR`` and ``LEAD_aVR`` by three different export
-tools, and a cohort silently missing a lead because of its spelling is the failure this
-prevents.
+tools -- and ``Lead aVR`` by a DICOM header -- and a cohort silently missing a lead
+because of its spelling is the failure this prevents.
 """
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Mapping, Sequence
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +47,7 @@ import torch
 from numpy.typing import ArrayLike
 from torch import Tensor
 
+from kalecardiac.loaddata.image_access import get_dicom_paths, read_dicom
 from kalecardiac.loaddata.multimodal_access import ModalitySource
 
 #: The six leads derived from the limb electrodes, in their conventional order. A
@@ -57,17 +62,33 @@ PRECORDIAL_LEADS: tuple[str, ...] = ("V1", "V2", "V3", "V4", "V5", "V6")
 STANDARD_12_LEAD: tuple[str, ...] = LIMB_LEADS + PRECORDIAL_LEADS
 
 
+#: Millivolts in one unit of each voltage a DICOM waveform may state its channels in,
+#: by UCUM code.
+_MILLIVOLTS_PER_UNIT: dict[str, float] = {"uV": 1e-3, "mV": 1.0, "V": 1e3}
+
+#: The prefix export tools put before a lead's name: ``LEAD_aVR``, ``Lead aVR``.
+_LEAD_PREFIX = re.compile(r"^lead[\s_]+(?=\S)", re.IGNORECASE)
+
+#: A parenthesised qualifier after a lead's name, as in DICOM's ``Lead I (Einthoven)``.
+_QUALIFIER = re.compile(r"\s*\(.*\)$")
+
+
 class ECGFormatError(ValueError):
     """Raised when a recording does not have the shape or leads it was declared with."""
 
 
-def canonical_lead(name: str) -> str:
+def normalize_lead_name(name: str) -> str:
     """Return the canonical spelling of a lead name.
 
-    Strips a ``LEAD_`` prefix and matches case-insensitively against
-    :data:`STANDARD_12_LEAD`, so ``"LEAD_avr"``, ``"AVR"`` and ``"aVR"`` all give
-    ``"aVR"``. A name that is not a standard lead is returned with only the prefix
-    stripped, which keeps the function usable for a cohort with its own vocabulary.
+    Strips a ``LEAD_`` or ``Lead`` prefix, and matches case-insensitively against
+    :data:`STANDARD_12_LEAD` -- with or without a parenthesised qualifier -- so
+    ``"LEAD_avr"``, ``"AVR"`` and ``"aVR"`` all give ``"aVR"``, and DICOM's
+    ``"Lead I (Einthoven)"`` gives ``"I"``. A name that is not a standard lead is returned
+    with only the prefix stripped, which keeps the function usable for a cohort with its
+    own vocabulary.
+
+        >>> normalize_lead_name("LEAD_avr"), normalize_lead_name("Lead I (Einthoven)")
+        ('aVR', 'I')
 
     Args:
         name: Lead name as the cohort spells it.
@@ -75,16 +96,15 @@ def canonical_lead(name: str) -> str:
     Returns:
         The canonical spelling.
     """
-    stripped = str(name).strip()
-    if stripped.upper().startswith("LEAD_"):
-        stripped = stripped[len("LEAD_") :]
-    for standard in STANDARD_12_LEAD:
-        if stripped.upper() == standard.upper():
-            return standard
+    stripped = _LEAD_PREFIX.sub("", str(name).strip())
+    for candidate in (stripped, _QUALIFIER.sub("", stripped)):
+        for standard in STANDARD_12_LEAD:
+            if candidate.upper() == standard.upper():
+                return standard
     return stripped
 
 
-def canonical_leads(names: Sequence[str]) -> tuple[str, ...]:
+def normalize_lead_names(names: Sequence[str]) -> tuple[str, ...]:
     """Canonicalise a sequence of lead names, rejecting duplicates.
 
     Args:
@@ -100,14 +120,14 @@ def canonical_leads(names: Sequence[str]) -> tuple[str, ...]:
     """
     if not names:
         raise ECGFormatError("an ECG source must declare its leads; there is no default lead set")
-    canonical = tuple(canonical_lead(name) for name in names)
+    canonical = tuple(normalize_lead_name(name) for name in names)
     duplicates = sorted({lead for lead in canonical if canonical.count(lead) > 1})
     if duplicates:
         raise ECGFormatError(f"lead names {duplicates} appear more than once after canonicalisation: {list(names)}")
     return canonical
 
 
-def lead_indices(available: Sequence[str], wanted: Sequence[str]) -> list[int]:
+def get_lead_indices(available: Sequence[str], wanted: Sequence[str]) -> list[int]:
     """Positions of ``wanted`` within ``available``, matched canonically.
 
     The one place lead selection and lead *ordering* are decided, so that asking for
@@ -123,15 +143,15 @@ def lead_indices(available: Sequence[str], wanted: Sequence[str]) -> list[int]:
     Raises:
         ECGFormatError: If a wanted lead is not available.
     """
-    positions = {lead: index for index, lead in enumerate(canonical_leads(available))}
-    chosen = canonical_leads(wanted)
+    positions = {lead: index for index, lead in enumerate(normalize_lead_names(available))}
+    chosen = normalize_lead_names(wanted)
     missing = [lead for lead in chosen if lead not in positions]
     if missing:
         raise ECGFormatError(f"leads {missing} are not in this recording, which holds {sorted(positions)}")
     return [positions[lead] for lead in chosen]
 
 
-def as_lead_array(value: ArrayLike, num_leads: int) -> np.ndarray:
+def check_ecg_array(value: ArrayLike, num_leads: int) -> np.ndarray:
     """Coerce a recording to ``(num_leads, num_samples)`` float32.
 
     A one-dimensional input is accepted for a single-lead recording, and a
@@ -218,9 +238,9 @@ class ECGArraySource(ModalitySource):
         length: int | None = None,
         channels: int | None = None,
     ) -> None:
-        self.source_leads = canonical_leads(leads)
-        self.leads = self.source_leads if select is None else canonical_leads(select)
-        self._indices = lead_indices(self.source_leads, self.leads)
+        self.source_leads = normalize_lead_names(leads)
+        self.leads = self.source_leads if select is None else normalize_lead_names(select)
+        self._indices = get_lead_indices(self.source_leads, self.leads)
         self.sampling_rate = float(sampling_rate)
         self.transform = transform
         # Held by reference rather than copied: a file-backed source passes a
@@ -255,7 +275,7 @@ class ECGArraySource(ModalitySource):
         return self.channels == self.num_leads
 
     def _read(self, identifier: str) -> Tensor:
-        array = as_lead_array(self.recordings[identifier], len(self.source_leads))
+        array = check_ecg_array(self.recordings[identifier], len(self.source_leads))
         array = array[self._indices]
         if self.transform is not None:
             array = np.asarray(self.transform(array), dtype=np.float32)
@@ -274,7 +294,7 @@ class ECGArraySource(ModalitySource):
             raise ECGFormatError(
                 f"subject {identifier!r} yields a {tuple(recording.shape)} recording but the source declares "
                 f"({self.channels}, {self.length}). Every subject must reach a batch at one shape; crop or pad "
-                f"the cohort first, with kalecardiac.prepdata.crop_or_pad."
+                f"the cohort first, with kalecardiac.prepdata.crop_or_pad_signal."
             )
         return recording
 
@@ -291,14 +311,104 @@ class ECGArraySource(ModalitySource):
         )
 
 
+def read_dicom_ecg(path: str | Path, group: int | None = None) -> tuple[np.ndarray, tuple[str, ...], float]:
+    """One ECG from DICOM: the recording, the leads it holds, and the rate they were sampled at.
+
+    DICOM stores an ECG as one or more groups of channels, each channel naming its lead
+    in a code -- ``"Lead I (Einthoven)"``, ``"Lead aVR"``. The names come back canonical
+    (see :func:`normalize_lead_name`), so a lead is found by its name rather than its
+    position: two exports storing aVL and aVF in opposite orders give the same leads.
+
+    The file is read by :func:`~kalecardiac.loaddata.read_dicom`, through PyKale's DICOM
+    reader, and the samples by ``pydicom``, which applies each channel's sensitivity and
+    baseline.
+
+    Args:
+        path: A subject's folder holding one DICOM ECG, or a ``.dcm`` file.
+        group: Which group of channels to read. ``None`` reads the first one recorded
+            rather than derived -- the rhythm strip, not the median beat an ECG cart
+            computes from it.
+
+    Returns:
+        ``(recording, leads, sampling_rate)``: a ``(num_leads, num_samples)`` float32
+        array, in millivolts wherever a channel states its sensitivity in a voltage; the
+        leads' canonical names, in stored order; and samples per second.
+
+    Raises:
+        ECGFormatError: If the DICOM holds no waveform, ``group`` does not exist, a
+            channel names no lead or two name the same one, or a channel's unit is not a
+            voltage.
+    """
+    dataset = read_dicom(path)
+    groups = dataset.get("WaveformSequence")
+    if not groups:
+        kind = getattr(dataset.get("SOPClassUID"), "name", "a DICOM without a waveform")
+        raise ECGFormatError(f"{path} holds no waveform: it is {kind}")
+    if group is None:
+        group = next((index for index, item in enumerate(groups) if item.get("WaveformOriginality") == "ORIGINAL"), 0)
+    if not 0 <= group < len(groups):
+        raise ECGFormatError(f"{path} holds {len(groups)} waveform group(s), so there is no group {group}")
+
+    channels = groups[group].ChannelDefinitionSequence
+    try:
+        leads = normalize_lead_names([_dicom_lead_name(channel) for channel in channels])
+    except ECGFormatError as error:
+        raise ECGFormatError(f"{path}: {error}") from error
+    millivolts = np.array([_millivolts_per_unit(channel, path) for channel in channels])
+    recording = dataset.waveform_array(group) * millivolts
+    return np.ascontiguousarray(recording.T, dtype=np.float32), leads, float(groups[group].SamplingFrequency)
+
+
+def _dicom_lead_name(channel) -> str:
+    """The lead a DICOM waveform channel records, as its source code or its label names it."""
+    source = channel.get("ChannelSourceSequence")
+    name = (source[0].get("CodeMeaning") if source else None) or channel.get("ChannelLabel")
+    if not name:
+        raise ECGFormatError("a channel names no lead: it has no source code meaning and no label")
+    return str(name)
+
+
+def _millivolts_per_unit(channel, path: str | Path) -> float:
+    """Millivolts in one of a DICOM channel's sample units; 1 where it states no sensitivity, leaving it as stored."""
+    units = channel.get("ChannelSensitivityUnitsSequence")
+    if "ChannelSensitivity" not in channel or not units:
+        return 1.0
+    code = str(units[0].CodeValue)
+    if code not in _MILLIVOLTS_PER_UNIT:
+        raise ECGFormatError(
+            f"{path} states a channel in {code!r}, which is not a voltage this reader converts; it reads "
+            f"{sorted(_MILLIVOLTS_PER_UNIT)}"
+        )
+    return _MILLIVOLTS_PER_UNIT[code]
+
+
+def _read_dicom_leads(path: Path, leads: Sequence[str], sampling_rate: float, group: int | None) -> np.ndarray:
+    """One subject's DICOM ECG with its leads in the cohort's order, held to the cohort's rate."""
+    recording, stored, rate = read_dicom_ecg(path, group=group)
+    if rate != sampling_rate:
+        raise ECGFormatError(
+            f"{path} is sampled at {rate:g} Hz and the cohort's first subject at {sampling_rate:g} Hz; bring them to "
+            f"one rate before loading -- see kalecardiac.prepdata.resample_signal"
+        )
+    try:
+        return recording[get_lead_indices(stored, leads)]
+    except ECGFormatError as error:
+        raise ECGFormatError(f"{path}: {error}") from error
+
+
 def _default_loader(path: Path) -> np.ndarray:
     """Read a recording saved as ``.npy`` or ``.pt``.
 
-    Two formats because those are what a preprocessing script leaves behind. Anything
-    else -- WFDB, DICOM waveforms, a vendor export -- is a *dataset's* format, so it
-    arrives as a ``loader`` argument rather than as a branch here.
+    Two formats because those are what a preprocessing script leaves behind. A DICOM ECG
+    names its own leads, so it is read by :meth:`ECGFileSource.from_dicom`, which takes
+    the names from it. Anything else -- WFDB, a vendor export -- is a *dataset's* format,
+    so it arrives as a ``loader`` argument rather than as a branch here.
     """
     suffix = path.suffix.lower()
+    if suffix == ".dcm":
+        raise ECGFormatError(
+            f"{path.name} is DICOM, which names its own leads; build the source with ECGFileSource.from_dicom"
+        )
     if suffix == ".npy":
         return np.load(path)
     if suffix in {".pt", ".pth"}:
@@ -324,7 +434,9 @@ class ECGFileSource(ECGArraySource):
         transform: Applied to the selected array; see :class:`ECGArraySource`.
         length: Samples per lead after the transform. Inferred from the first file
             when omitted, which reads one file at construction.
-        loader: Reads one file into an array. Defaults to ``.npy`` and ``.pt``.
+        loader: Reads one file into an array. Defaults to ``.npy`` and ``.pt``. For a
+            folder of DICOM ECGs, use :meth:`from_dicom`, which reads the leads' names
+            from the files.
 
     Raises:
         ECGFormatError: As :class:`ECGArraySource`, or if a file cannot be read.
@@ -352,6 +464,66 @@ class ECGFileSource(ECGArraySource):
             transform=transform,
             length=length,
             channels=channels,
+        )
+
+    @classmethod
+    def from_dicom(
+        cls,
+        root: str | Path,
+        select: Sequence[str] | None = None,
+        transform: Callable[[np.ndarray], np.ndarray] | None = None,
+        length: int | None = None,
+        channels: int | None = None,
+        sampling_rate: float | None = None,
+        group: int | None = None,
+    ) -> ECGFileSource:
+        """One ECG per subject, from a folder of DICOM exports, read as each subject is needed.
+
+        ``root`` holds a folder (or a ``.dcm`` file) per subject, named by its identifier
+        -- see :func:`~kalecardiac.loaddata.get_dicom_paths` -- and each subject's ECG is
+        read by :func:`read_dicom_ecg`, through PyKale's DICOM reader, in the DataLoader
+        worker.
+
+        The leads and their rate are read from the first subject's header rather than
+        declared, and every other subject is held to them: its leads are found by name and
+        returned in the first subject's order, so an export that stores aVF before aVL
+        cannot transpose them, and a subject recorded at another rate or missing a lead
+        is an error that names its file.
+
+        Args:
+            root: The folder of subjects.
+            select: Leads to take, in the order the model reads them. ``None`` keeps every
+                lead, in the order the first subject stores them.
+            transform: Applied to the selected leads; see :class:`ECGArraySource`.
+            length: Samples per channel after the transform. Inferred from the first
+                subject when omitted.
+            channels: Channels after the transform. Inferred alongside ``length``.
+            sampling_rate: Rate of what the source returns, recorded as provenance.
+                ``None`` takes the header's, which is right unless ``transform`` resamples.
+            group: Which group of channels to read; see :func:`read_dicom_ecg`.
+
+        Returns:
+            The source, keyed by subject.
+
+        Raises:
+            ECGFormatError: If ``root`` holds no subject, or the first subject's ECG
+                cannot be read.
+        """
+        paths = get_dicom_paths(root)
+        if not paths:
+            raise ECGFormatError(f"no subject folder or .dcm file under {root}")
+        _, leads, rate = read_dicom_ecg(next(iter(paths.values())), group=group)
+        return cls(
+            paths,
+            leads=leads,
+            sampling_rate=rate if sampling_rate is None else sampling_rate,
+            select=select,
+            transform=transform,
+            length=length,
+            channels=channels,
+            # A partial of a module-level function, rather than a closure, so the source
+            # pickles into DataLoader workers on a platform that spawns them.
+            loader=partial(_read_dicom_leads, leads=leads, sampling_rate=rate, group=group),
         )
 
     def read_file(self, identifier: str) -> np.ndarray:
@@ -426,8 +598,8 @@ class LeadSource(ModalitySource):
                 f"leads before flattening or deriving, not after."
             )
         self.source = source
-        self.lead = canonical_lead(lead)
-        self._index = lead_indices(source.leads, [self.lead])[0]
+        self.lead = normalize_lead_name(lead)
+        self._index = get_lead_indices(source.leads, [self.lead])[0]
 
     def get(self, identifier: str, index: int) -> Tensor | None:
         recording = self.source.get(identifier, index)
@@ -443,7 +615,7 @@ class LeadSource(ModalitySource):
         return f"LeadSource({self.lead} of {self.source!r})"
 
 
-def lead_sources(
+def get_lead_sources(
     source: ECGArraySource,
     leads: Sequence[str] | None = None,
     prefix: str = "",
@@ -469,5 +641,5 @@ def lead_sources(
     Raises:
         ECGFormatError: If a named lead is not in ``source``.
     """
-    chosen = source.leads if leads is None else canonical_leads(leads)
+    chosen = source.leads if leads is None else normalize_lead_names(leads)
     return {f"{prefix}{lead}": LeadSource(source, lead) for lead in chosen}

@@ -16,7 +16,7 @@ loaddata  →  prepdata  →  model  →  pipeline  →  evaluate  →  interpre
 
 ```text
 kalecardiac/
-├── auto/        high-level construction (AutoCardiac* classes, not yet built)
+├── auto/        workflows read from a configuration: the endpoint, pretraining, fine-tuning over folds
 ├── loaddata/    access APIs per modality, plus subject-level splitting
 ├── prepdata/    transforms over signals and images
 ├── model/       layers/ blocks, embed/ encoders and models, predict/ heads and objectives
@@ -79,7 +79,7 @@ implementation the lead list in the preprocessing script and the list the encode
 indexes disagree — aVL and aVF are transposed between them — so a per-lead model learns
 one lead's representation from another's signal, and nothing crashes.
 
-`lead_sources()` turns one recording source into a named source per lead. That single
+`get_lead_sources()` turns one recording source into a named source per lead. That single
 function is the whole of "each lead is a modality" at the loading stage; after it, a
 twelve-lead cohort is an ordinary thirteen-source `MultimodalDataset` and nothing
 downstream knows the modalities happen to be leads.
@@ -200,7 +200,7 @@ negative scores 80% accuracy.
 | --- | --- |
 | Where in a recording was the evidence? | `modality_attributions` (integrated gradients) |
 | Which lead, or which modality? | `attribution_ratios` (the attribution ratio and its share) |
-| Which part of the cardiac cycle? | `segment_attribution_ratios` with `ecg_wave_segments` |
+| Which part of the cardiac cycle? | `segment_attribution_ratios` with `delineate_ecg_waves` |
 | Could the model have done without it? | `modality_ablation` |
 
 Attribution and ablation can disagree, and that is informative rather than a bug: a lead
@@ -229,11 +229,27 @@ where the shapes do. `kale.predict.decode` is not importable without
 `torch_geometric`, so the decoders and the linear head are implemented here too, as
 KaleCancer also found.
 
+## Where the configuration is read
+
+Every stage takes explicit arguments; `kalecardiac.auto` is the only one that reads a
+`CfgNode`. It holds what every cardiac experiment does with the same settings the same
+way, which is exactly the part the two examples' runners once copied between them:
+
+- `auto.endpoint` turns `cfg.ENDPOINT` into labels (`derive_endpoint`), the task they
+  imply, weighted from the training fold (`get_prediction_task`), and the metrics that
+  score it (`score_predictions`, `get_ablation_metric`).
+- `auto.workflow` pretrains or loads a representation (`pretrain`), draws the folds
+  (`get_folds`), and fine-tunes a fresh copy of the representation on each, scoring and
+  interpreting it (`fine_tune`, `cross_validate`, `interpret_model`).
+
+What stays in an example is what no other experiment would share: where its cohort is
+and what its columns mean, which model it builds from the cohort's shapes, which arms or
+lead groups it compares, and any report of its own. LS-EMVAE's robustness curve is one:
+it runs as the `report` that `cross_validate` calls after every fold, off the training's
+random stream like the interpretation.
+
 ## What is deliberately not here
 
-- **No `auto` implementation.** Turning a configuration into a workflow is what an
-  example's runner does; which part of that has no dataset in it is not yet clear, and
-  an empty API pretending otherwise would be worse than none.
 - **No trainer per model, no dataset class per modality combination, no registry with
   one implementation.** Each would be an abstraction with no second user.
 - **No vendored third-party model code.** The residual 1-D encoder is a clean

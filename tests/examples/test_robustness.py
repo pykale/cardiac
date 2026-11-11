@@ -13,7 +13,6 @@ import csv
 import pytest
 
 from examples.lsemvae_ecg import runner as lsemvae_runner
-from kalecardiac.evaluate import multiclass_roc_auc, r2_score, roc_auc
 from tests.examples.test_example_workflows import lsemvae_cfg
 
 
@@ -56,23 +55,6 @@ class TestResolveRobustnessOrder:
         with pytest.raises(ValueError, match="ROBUSTNESS.ORDER"):
             lsemvae_runner.run(cfg)
         assert not any(tmp_path.iterdir())
-
-
-class TestWithholdingMetric:
-    @pytest.mark.parametrize(
-        ("overrides", "expected"),
-        [
-            ({}, ("roc_auc", roc_auc, "label")),
-            (
-                {"ENDPOINT.LABEL_COLUMN": "subtype", "ENDPOINT.NUM_CLASSES": 3},
-                ("roc_auc_ovr", multiclass_roc_auc, "label"),
-            ),
-            ({"ENDPOINT.REGRESSION": True}, ("r2", r2_score, "value")),
-        ],
-        ids=["binary", "three-class", "regression"],
-    )
-    def test_each_endpoint_is_rescored_with_its_threshold_free_metric(self, tmp_path, overrides, expected):
-        assert lsemvae_runner.withholding_metric(lsemvae_cfg(tmp_path, **overrides)) == expected
 
 
 def _curve(path):

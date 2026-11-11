@@ -6,7 +6,13 @@ import numpy as np
 import pytest
 
 from kalecardiac.loaddata import LIMB_LEADS, STANDARD_12_LEAD, ECGFormatError
-from kalecardiac.prepdata import build_ecg_pipeline, derive_limb_leads, lead_selector, select_leads
+from kalecardiac.prepdata import (
+    derive_limb_leads,
+    get_ecg_transform,
+    get_lead_selector,
+    interleave_leads,
+    select_leads,
+)
 
 
 @pytest.fixture
@@ -81,32 +87,56 @@ class TestDeriveLimbLeads:
 
 class TestLeadSelector:
     def test_returns_a_one_argument_callable(self, twelve_lead):
-        select = lead_selector(STANDARD_12_LEAD, ["II", "V6"])
+        select = get_lead_selector(STANDARD_12_LEAD, ["II", "V6"])
         assert select(twelve_lead).shape == (2, 200)
 
     def test_names_itself_for_a_pipeline_repr(self):
-        assert "II" in lead_selector(STANDARD_12_LEAD, ["II"]).__name__
+        assert "II" in get_lead_selector(STANDARD_12_LEAD, ["II"]).__name__
 
     def test_derive_mode_reconstructs_a_missing_lead(self):
         signal = np.random.default_rng(2).normal(size=(2, 50)).astype(np.float32)
-        select = lead_selector(["I", "II"], LIMB_LEADS, derive=True)
+        select = get_lead_selector(["I", "II"], LIMB_LEADS, derive=True)
         assert select(signal).shape == (6, 50)
+
+
+class TestInterleaveLeads:
+    def test_the_strip_holds_every_leads_sample_before_the_next_sample(self):
+        # The reference implementation flattens a (samples, leads) recording row by row.
+        recording = np.arange(12, dtype=np.float32).reshape(3, 4)
+        strip = interleave_leads(recording)
+        assert strip.shape == (1, 12)
+        assert np.array_equal(strip[0], recording.T.reshape(-1))
+        assert np.array_equal(strip[0, :3], recording[:, 0])
+
+    def test_a_lead_reads_back_out_of_the_strip(self, twelve_lead):
+        assert np.array_equal(interleave_leads(twelve_lead).reshape(-1, 12)[:, 4], twelve_lead[4])
+
+    def test_interleaving_comes_after_every_per_lead_step(self):
+        # A lead recorded at ten times another's amplitude comes out on the same scale,
+        # because each lead is normalized on its own before the leads are interleaved.
+        generator = np.random.default_rng(0)
+        recording = np.vstack([generator.normal(size=150), 10 * generator.normal(size=150)])
+        transform = get_ecg_transform(length=100, interleave=True)
+        strip = transform(recording)
+        assert transform.transforms[-1] is interleave_leads
+        assert strip.shape == (1, 200)
+        assert np.allclose(strip[0].reshape(100, 2).std(axis=0), 1.0, atol=1e-4)
 
 
 class TestBuildEcgPipeline:
     def test_produces_the_requested_length_and_normalisation(self, twelve_lead):
-        pipeline = build_ecg_pipeline(length=128, sampling_rate=500, source_sampling_rate=250)
+        pipeline = get_ecg_transform(length=128, sampling_rate=500, source_sampling_rate=250)
         result = pipeline(twelve_lead)
         assert result.shape == (12, 128)
         assert np.allclose(result.mean(axis=1), 0.0, atol=1e-5)
         assert np.allclose(result.std(axis=1), 1.0, atol=1e-5)
 
     def test_resampling_is_skipped_when_the_rates_agree(self, twelve_lead):
-        pipeline = build_ecg_pipeline(length=200, sampling_rate=500, source_sampling_rate=500)
+        pipeline = get_ecg_transform(length=200, sampling_rate=500, source_sampling_rate=500)
         assert not any("resample" in step for step in repr(pipeline).split(", "))
 
     def test_amplitude_scaling_preserves_channel_ratios(self, twelve_lead):
-        pipeline = build_ecg_pipeline(length=200, standardise_leads=False, amplitude_scale=4.0)
+        pipeline = get_ecg_transform(length=200, normalize_leads=False, amplitude_scale=4.0)
         result = pipeline(twelve_lead)
         assert np.allclose(result, twelve_lead / 4.0, atol=1e-5)
 
@@ -115,23 +145,23 @@ class TestBuildEcgPipeline:
         signal[0] = np.linspace(0, 1, 40)
         signal[1] = np.linspace(0, 1, 40)
         signal[0, 10] = np.nan
-        result = build_ecg_pipeline(length=40)(signal)
+        result = get_ecg_transform(length=40)(signal)
         assert np.isfinite(result).all()
 
     def test_asking_for_both_normalisations_is_rejected(self):
         with pytest.raises(ValueError, match="choose one"):
-            build_ecg_pipeline(length=100, standardise_leads=True, amplitude_scale=2.0)
+            get_ecg_transform(length=100, normalize_leads=True, amplitude_scale=2.0)
 
     def test_asking_for_neither_is_rejected(self):
         with pytest.raises(ValueError, match="no normalisation requested"):
-            build_ecg_pipeline(length=100, standardise_leads=False)
+            get_ecg_transform(length=100, normalize_leads=False)
 
 
 def test_pipeline_plugs_into_an_ecg_source(cohort):
     """The integration the pipeline exists for: a source applies it per subject."""
     from kalecardiac.loaddata import ECGArraySource
 
-    pipeline = build_ecg_pipeline(length=64, sampling_rate=cohort.sampling_rate)
+    pipeline = get_ecg_transform(length=64, sampling_rate=cohort.sampling_rate)
     source = ECGArraySource(cohort.ecg, leads=cohort.leads, transform=pipeline)
     recording = source.get(cohort.subject_id[0], 0)
     assert recording.shape == (len(cohort.leads), 64)

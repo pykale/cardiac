@@ -18,19 +18,47 @@ crude so that nobody mistakes an output of it for a recording.
 The label is generated from the signal, so a model that learns nothing scores about
 0.5 and a working pipeline scores clearly above it. That is the point: a smoke test
 that passes on noise tests nothing.
+
+A cohort can also be written to disk as DICOM -- :func:`write_synthetic_dicom_cohort`,
+one folder per subject, as a hospital exports one -- so that reading raw files is tested
+without any raw file being real. That needs pydicom, from the ``imaging`` extra.
 """
 
 from __future__ import annotations
 
+import csv
 from collections.abc import Sequence
+from pathlib import Path
 from typing import NamedTuple
 
 import numpy as np
+
+from kalecardiac.loaddata import STANDARD_12_LEAD
 
 #: Lead names used when a caller does not supply their own. The six limb leads, because
 #: that is the reduced configuration a low-cost recorder captures and the one both
 #: cardiac use cases fine-tune on.
 DEFAULT_LEADS: tuple[str, ...] = ("I", "II", "III", "aVR", "aVL", "aVF")
+
+#: The SOP classes the DICOM writers produce: a twelve-lead ECG waveform, and a computed
+#: radiograph.
+ECG_WAVEFORM_STORAGE = "1.2.840.10008.5.1.4.1.1.9.1.1"
+RADIOGRAPH_STORAGE = "1.2.840.10008.5.1.4.1.1.1"
+
+#: How an ECG cart codes each standard lead (SCP-ECG), so a written file names its leads
+#: as a real export does.
+SCPECG_LEAD_CODES: dict[str, str] = {
+    "I": "5.6.3-9-1",
+    "II": "5.6.3-9-2",
+    "III": "5.6.3-9-61",
+    "aVR": "5.6.3-9-62",
+    "aVL": "5.6.3-9-63",
+    "aVF": "5.6.3-9-64",
+    **{f"V{index}": f"5.6.3-9-{index + 2}" for index in range(1, 7)},
+}
+
+#: Millivolts per unit of the voltages a written channel may be stated in, by UCUM code.
+MILLIVOLTS_PER_UNIT: dict[str, float] = {"uV": 1e-3, "mV": 1.0, "V": 1e3}
 
 
 class SyntheticCohort(NamedTuple):
@@ -147,7 +175,7 @@ def make_synthetic_image_data(
     enough dependence for a model to find, and nothing that resembles anatomy.
 
     Values are in the unit interval, matching what
-    :func:`~kalecardiac.prepdata.build_image_pipeline` produces and what a
+    :func:`~kalecardiac.prepdata.get_image_transform` produces and what a
     sigmoid image decoder can reconstruct.
 
     Args:
@@ -277,3 +305,239 @@ def make_synthetic_multimodal_data(
         leads=leads,
         sampling_rate=sampling_rate,
     )
+
+
+def _require_pydicom():
+    """Import pydicom's dataset and UID helpers, explaining the install if it is absent."""
+    try:
+        from pydicom.dataset import Dataset, FileMetaDataset
+        from pydicom.uid import ExplicitVRLittleEndian, generate_uid
+    except ImportError as error:  # pragma: no cover - exercised only without the extra
+        raise ImportError('writing DICOM needs pydicom: pip install "kalecardiac[imaging]"') from error
+    return Dataset, FileMetaDataset, ExplicitVRLittleEndian, generate_uid
+
+
+def _dicom_file(sop_class: str, modality: str, patient_id: str):
+    """An empty DICOM file of one SOP class, with the header every reader expects."""
+    Dataset, FileMetaDataset, ExplicitVRLittleEndian, generate_uid = _require_pydicom()
+    dataset = Dataset()
+    dataset.file_meta = FileMetaDataset()
+    dataset.file_meta.MediaStorageSOPClassUID = sop_class
+    dataset.file_meta.MediaStorageSOPInstanceUID = generate_uid()
+    dataset.file_meta.TransferSyntaxUID = ExplicitVRLittleEndian
+    dataset.SOPClassUID = sop_class
+    dataset.SOPInstanceUID = dataset.file_meta.MediaStorageSOPInstanceUID
+    dataset.Modality = modality
+    dataset.PatientID = patient_id
+    dataset.InstanceNumber = 1
+    return dataset
+
+
+def _save(dataset, path: str | Path) -> Path:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    dataset.save_as(path, enforce_file_format=True)
+    return path
+
+
+def _waveform_group(
+    recording: np.ndarray,
+    leads: Sequence[str],
+    sampling_rate: float,
+    unit: str,
+    sensitivity: float,
+    label: str,
+    originality: str,
+):
+    """One multiplex group: a channel per lead, each stored as whole multiples of its sensitivity."""
+    Dataset = _require_pydicom()[0]
+    counts = np.round(np.asarray(recording, dtype=np.float64) / (sensitivity * MILLIVOLTS_PER_UNIT.get(unit, 1.0)))
+    counts = np.clip(counts, -32768, 32767).astype("<i2")
+
+    channels = []
+    for lead in leads:
+        source = Dataset()
+        source.CodeValue = SCPECG_LEAD_CODES.get(lead, lead)
+        source.CodingSchemeDesignator = "SCPECG"
+        source.CodeMeaning = "Lead I (Einthoven)" if lead == "I" else f"Lead {lead}"
+        units = Dataset()
+        units.CodeValue = unit
+        units.CodingSchemeDesignator = "UCUM"
+        units.CodeMeaning = unit
+        channel = Dataset()
+        channel.ChannelSourceSequence = [source]
+        channel.ChannelSensitivity = sensitivity
+        channel.ChannelSensitivityUnitsSequence = [units]
+        channel.ChannelSensitivityCorrectionFactor = 1
+        channel.ChannelBaseline = 0
+        channel.WaveformBitsStored = 16
+        channels.append(channel)
+
+    group = Dataset()
+    group.MultiplexGroupTimeOffset = 0
+    group.WaveformOriginality = originality
+    group.NumberOfWaveformChannels = counts.shape[0]
+    group.NumberOfWaveformSamples = counts.shape[1]
+    group.SamplingFrequency = sampling_rate
+    group.MultiplexGroupLabel = label
+    group.ChannelDefinitionSequence = channels
+    group.WaveformBitsAllocated = 16
+    group.WaveformSampleInterpretation = "SS"
+    # Samples are stored time-major: every channel's first sample, then every second.
+    group.add_new(0x54001010, "OW", np.ascontiguousarray(counts.T).tobytes())
+    return group
+
+
+def write_dicom_ecg(
+    path: str | Path,
+    recording: np.ndarray,
+    leads: Sequence[str],
+    sampling_rate: float = 500.0,
+    unit: str = "uV",
+    sensitivity: float = 5.0,
+    median_beat: bool = False,
+    patient_id: str = "SYNTHETIC",
+) -> Path:
+    """Write a recording as a DICOM twelve-lead ECG waveform, as an ECG cart exports one.
+
+    Each channel names its lead as such an export does -- ``"Lead I (Einthoven)"``,
+    ``"Lead aVR"`` -- states its sensitivity in ``unit``, and stores whole multiples of it,
+    so what is read back is the recording to within half a sensitivity step.
+
+    Args:
+        path: Where to write, folders created as needed.
+        recording: ``(num_leads, num_samples)``, in millivolts.
+        leads: Lead names, in the order the rows hold them.
+        sampling_rate: Samples per second.
+        unit: UCUM code of the unit each channel's sensitivity is stated in.
+        sensitivity: How many ``unit`` one stored step is.
+        median_beat: Also write a derived group -- the median beat a cart computes --
+            ahead of the recorded one, so a reader that took the first group would read
+            the wrong one.
+        patient_id: The header's patient identifier.
+
+    Returns:
+        ``path``.
+    """
+    recording = np.asarray(recording, dtype=np.float64)
+    groups = [_waveform_group(recording, leads, sampling_rate, unit, sensitivity, "RHYTHM", "ORIGINAL")]
+    if median_beat:
+        beat = recording[:, : max(1, recording.shape[1] // 10)]
+        groups.insert(0, _waveform_group(beat, leads, sampling_rate, unit, sensitivity, "MEDIAN BEAT", "DERIVED"))
+    dataset = _dicom_file(ECG_WAVEFORM_STORAGE, "ECG", patient_id)
+    dataset.WaveformSequence = groups
+    return _save(dataset, path)
+
+
+def write_dicom_image(
+    path: str | Path,
+    image: np.ndarray,
+    photometric: str = "MONOCHROME2",
+    bits_stored: int = 12,
+    window: tuple[float, float] | None = None,
+    rescale: tuple[float, float] | None = None,
+    patient_id: str = "SYNTHETIC",
+) -> Path:
+    """Write a 2-D image as a DICOM radiograph.
+
+    Args:
+        path: Where to write, folders created as needed.
+        image: ``(height, width)`` stored values, rounded and clipped to ``bits_stored``.
+        photometric: ``"MONOCHROME2"``, where a higher value is brighter, or
+            ``"MONOCHROME1"``, where it is darker.
+        bits_stored: Bits each stored value uses.
+        window: ``(center, width)`` to display it with, if any.
+        rescale: ``(slope, intercept)`` mapping stored values to the modality's units,
+            if any.
+        patient_id: The header's patient identifier.
+
+    Returns:
+        ``path``.
+
+    Raises:
+        ValueError: If ``image`` is not 2-D.
+    """
+    pixels = np.asarray(image, dtype=np.float64)
+    if pixels.ndim != 2:
+        raise ValueError(f"a radiograph is 2-D, got shape {pixels.shape}")
+    stored = np.clip(np.round(pixels), 0, 2**bits_stored - 1).astype("<u2")
+
+    dataset = _dicom_file(RADIOGRAPH_STORAGE, "CR", patient_id)
+    dataset.Rows, dataset.Columns = stored.shape
+    dataset.SamplesPerPixel = 1
+    dataset.PhotometricInterpretation = photometric
+    dataset.BitsAllocated = 16
+    dataset.BitsStored = bits_stored
+    dataset.HighBit = bits_stored - 1
+    dataset.PixelRepresentation = 0
+    if window is not None:
+        dataset.WindowCenter, dataset.WindowWidth = window
+    if rescale is not None:
+        dataset.RescaleSlope, dataset.RescaleIntercept = rescale
+    dataset.PixelData = stored.tobytes()
+    return _save(dataset, path)
+
+
+def write_synthetic_dicom_cohort(
+    root: str | Path,
+    num_subjects: int = 20,
+    num_samples: int = 5000,
+    sampling_rate: float = 500.0,
+    image_size: Sequence[int] = (64, 64),
+    with_labels: bool = True,
+    seed: int = 0,
+) -> SyntheticCohort:
+    """Write a paired twelve-lead ECG and radiograph cohort as DICOM, laid out as a hospital exports one.
+
+    .. code-block:: text
+
+        <root>/ECG/<subject>/1/DICOM/00000000.dcm   a twelve-lead ECG waveform
+        <root>/CXR/<subject>/1/DICOM/00000000.dcm   a 12-bit radiograph
+        <root>/labels.csv                           subject_id,label  (with_labels)
+
+    The recordings and images are :func:`make_synthetic_multimodal_data`'s, so the label
+    is learnable from both, and the cohort is returned so a test can compare what a
+    reader gives back with what was written.
+
+    Args:
+        root: The folder to write the cohort into.
+        num_subjects: How many subjects.
+        num_samples: Samples per lead.
+        sampling_rate: Samples per second.
+        image_size: ``(height, width)`` of the radiographs.
+        with_labels: Also write the binary labels, as a fine-tuning cohort carries them.
+        seed: Seed, making the cohort reproducible.
+
+    Returns:
+        The cohort that was written, its recordings in millivolts.
+    """
+    cohort = make_synthetic_multimodal_data(
+        num_subjects=num_subjects,
+        leads=STANDARD_12_LEAD,
+        num_samples=num_samples,
+        sampling_rate=sampling_rate,
+        image_size=image_size,
+        seed=seed,
+    )
+    root = Path(root)
+    for subject in cohort.subject_id:
+        write_dicom_ecg(
+            root / "ECG" / subject / "1" / "DICOM" / "00000000.dcm",
+            cohort.ecg[subject],
+            cohort.leads,
+            sampling_rate=sampling_rate,
+            patient_id=subject,
+        )
+        # The generator's [0, 1] images, stored as a 12-bit detector would store them.
+        write_dicom_image(
+            root / "CXR" / subject / "1" / "DICOM" / "00000000.dcm",
+            cohort.image[subject][0] * 4095,
+            window=(2047.5, 4096),
+            patient_id=subject,
+        )
+    if with_labels:
+        with open(root / "labels.csv", "w", newline="", encoding="utf-8") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(["subject_id", "label"])
+            writer.writerows((subject, cohort.labels[subject]) for subject in cohort.subject_id)
+    return cohort
