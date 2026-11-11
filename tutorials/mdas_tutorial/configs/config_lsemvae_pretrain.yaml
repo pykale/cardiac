@@ -1,0 +1,56 @@
+# Pretraining in the tutorial (tutorial-LSEMVAE.ipynb): LS-EMVAE on the tutorial dataset's
+# unlabelled twelve-lead ECGs, each lead a modality of its own. Merged onto KaleCardiac's
+# defaults, kalecardiac.config, so it needs nothing beyond the installed package.
+DATASET:
+  # The unlabelled cohort, as the notebook's download unpacks it. Only ECG/ is read: one folder
+  # per subject with that subject's DICOM ECG.
+  ROOT: "data/kalecardiac_pretraining"
+
+ECG:
+  # The twelve leads, each read by an encoder of its own, in the order they are stacked as
+  # experts. The order decides which leads the hierarchical fusion groups together: in the
+  # clinical order the limb leads come first and the precordial leads last. Each is found by
+  # name in the DICOM header, whatever order a file stores them in.
+  LEADS: ["I", "II", "III", "aVR", "aVL", "aVF", "V1", "V2", "V3", "V4", "V5", "V6"]
+  # Ten seconds at 500 Hz of every lead, normalized lead by lead. NUM_CHANNELS 0 keeps a
+  # channel per lead, so each recording can be split into its leads.
+  SAMPLING_RATE: 500
+  LENGTH: 5000
+  NUM_CHANNELS: 0
+  NORMALIZE: true
+
+MODEL:
+  # Width of the latent space every lead shares; the published model's is 256.
+  LATENT_DIM: 128
+  # Each lead's 1-D convolutional encoder. The decoder every lead shares reverses it.
+  CHANNELS: [16, 32, 64]
+  KERNEL_SIZE: 3
+
+FUSION:
+  # Hierarchical modality experts (HiME): a product of experts within each group of leads,
+  # then the groups averaged. "poe" and "moe" are the two published ablations.
+  LATENT_METHOD: "hime"
+  # Four groups of the standard-normal prior and the twelve leads: the prior with I, II and
+  # III; aVR, aVL and aVF; V1 to V3; V4 to V6.
+  NUM_GROUPS: 4
+  USE_PRIOR: true
+
+OBJECTIVE:
+  # The ELBO over every lead, the reconstruction scaled to sit beside the KL term, which is
+  # annealed in over the run. The alignment term pulls each lead's posterior towards the
+  # joint one, so that a lead's representation stays usable when other leads are absent.
+  SCALE_FACTOR: 0.001
+  ANNEALING_EPOCHS: 10
+  ALIGNMENT_WEIGHT: 0.1
+
+SOLVER:
+  SEED: 123
+  OPTIMIZER: "AdamW"
+  BASE_LR: 0.0005
+  WEIGHT_DECAY: 0.00001
+  MAX_EPOCHS: 10
+  BATCH_SIZE: 4
+
+OUTPUT:
+  # Apart from the CardioVAE tutorial's outputs, so both tutorials can run in this folder.
+  OUT_DIR: "outputs/lsemvae_pretraining"

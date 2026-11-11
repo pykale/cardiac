@@ -22,8 +22,9 @@ Notable changes to KaleCardiac. The format follows
   examples hardcoded, at the same values.
 - `evaluate.flatten_fold_summary`, a fold summary as one row of a results table.
 - **A tutorial notebook**, `tutorials/mdas_tutorial/tutorial-CardioVAE.ipynb`, with its
-  pretraining and fine-tuning configurations beside it in `configs/`, each merged onto
-  the package's defaults: paired chest X-rays and twelve-lead ECGs, read from raw
+  pretraining and fine-tuning configurations beside it in `configs/`
+  (`config_cardiovae_pretrain.yaml` and `config_cardiovae_finetune.yaml`), each merged
+  onto the package's defaults: paired chest X-rays and twelve-lead ECGs, read from raw
   DICOM, taken through pretraining, fine-tuning, evaluation and interpretation in a few
   calls each. In Colab it installs KaleCardiac from GitHub with pip and fetches its own
   folder alone, then downloads the dataset from Dropbox into the runtime, with no Google
@@ -32,6 +33,16 @@ Notable changes to KaleCardiac. The format follows
   synthetic cohort written as DICOM in the same layout, without the download. It
   replaces `tutorials/cardiac_abnormality_assessment.ipynb`, which loaded prepared
   tensors.
+- **A second tutorial notebook**, `tutorials/mdas_tutorial/tutorial-LSEMVAE.ipynb`, in the
+  same layout and on the same dataset, reading its ECGs alone with each lead a modality:
+  LS-EMVAE is pretrained on all twelve leads from raw DICOM, with its HiME fusion, shared
+  decoder and latent alignment, its leads' agreement with the joint posterior checked,
+  fine-tuned as published -- each lead's frozen posterior mean, concatenated -- on the six
+  limb leads or, with `USE_12_LEADS`, all twelve, scored again with leads withheld down to
+  lead I, and interpreted per lead. Its configurations are
+  `configs/config_lsemvae_pretrain.yaml` and `config_lsemvae_finetune.yaml`, writing to
+  their own output folders. Its Colab preparation is the CardioVAE tutorial's, cell for
+  cell, which a test holds it to; another runs it on a synthetic DICOM cohort.
 - **DICOM, read through PyKale's reader.** `ECGFileSource.from_dicom` and
   `ImageFileSource.from_dicom` take a folder holding one folder per subject, the
   folder's name identifying the subject. A DICOM ECG's leads and rate are read from its
@@ -166,7 +177,8 @@ Notable changes to KaleCardiac. The format follows
 - The command lines take `argv`, configure logging in `main()` rather than on import,
   and reject a `--leads` or `--arms` value with an empty name.
 - The source distribution carries the tests, the examples, the tutorials and the
-  documentation; the wheel still carries the library alone.
+  documentation; the wheel still carries the library alone. A tutorial's downloaded
+  dataset archive, like the data it unpacks, is kept out of both the distribution and git.
 - The licence is declared as an SPDX expression, which setuptools requires from 2027.
 
 ### Fixed

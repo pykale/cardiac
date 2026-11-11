@@ -148,9 +148,10 @@ ECGFileSource(paths, leads=..., loader=lambda path: wfdb.rdsamp(str(path.with_su
 
 A folder of DICOM exports, one folder per subject, needs no loader. `ECGFileSource.from_dicom(root)`
 and `ImageFileSource.from_dicom(root)` read them through PyKale's DICOM reader, taking the leads'
-names, their rate and an image's display settings from the files themselves; the
-[tutorial](https://github.com/pykale/cardiac/blob/main/tutorials/mdas_tutorial/tutorial-CardioVAE.ipynb)
-starts from them.
+names, their rate and an image's display settings from the files themselves; both
+tutorials -- [CardioVAE](https://github.com/pykale/cardiac/blob/main/tutorials/mdas_tutorial/tutorial-CardioVAE.ipynb)
+and [LS-EMVAE](https://github.com/pykale/cardiac/blob/main/tutorials/mdas_tutorial/tutorial-LSEMVAE.ipynb) --
+start from them.
 
 Then point an example at it:
 
