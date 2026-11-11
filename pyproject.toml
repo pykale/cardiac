@@ -30,7 +30,7 @@ dependencies = [
     "scikit-learn",
     "pyyaml",
     "yacs",
-    "pykale>=0.2.0",
+    "pykale>=0.2.2",
     "pytorch-lightning",
 ]
 
