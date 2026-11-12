@@ -8,6 +8,8 @@ Notable changes to KaleCardiac. The format follows
 
 ### Added
 
+- A per-subject missing-expert parity test for Gaussian fusion. CI also runs for pull
+  requests targeting the `migration/pykale-core` integration branch.
 - **`kalecardiac.auto`: the workflow both examples share, read from a configuration.**
   `auto.endpoint` turns `ENDPOINT` into labels, a task and scores (`check_endpoint`,
   `derive_endpoint`, `get_endpoint_target`, `get_prediction_task`, `score_predictions`,
@@ -145,7 +147,7 @@ Notable changes to KaleCardiac. The format follows
   | `scale_image`, `standardise_image` | `scale_image_intensity`, `normalize_image` |
   | `canonical_lead(s)`, `lead_indices`, `lead_sources` | `normalize_lead_name(s)`, `get_lead_indices`, `get_lead_sources` |
   | `HoldOut`, `CrossValidation`, `Predefined`, `CohortSplitter` | `HoldOutSplit`, `CrossValidationSplit`, `PredefinedSplit`, `BaseSplitter` |
-  | `composite_labels`, `expert_groups`, `reparameterise` | `get_stratification_labels`, `get_expert_groups`, `reparameterize` |
+  | `composite_labels`, `reparameterise` | `get_stratification_labels`, `reparameterize` |
   | `summarise_folds`, `normalise_attribution` | `summarize_folds`, `normalize_attribution` |
   | `ecg_wave_segments`, `latent_embedding` | `delineate_ecg_waves`, `project_latents` |
   | `ECG.STANDARDISE` | `ECG.NORMALIZE` |
@@ -156,6 +158,17 @@ Notable changes to KaleCardiac. The format follows
   naming its replacement, or the dependency's function that replaced it, and
   `ECG.STANDARDISE` is a renamed key to YACS.
 
+- Shared Gaussian averaging, barycenter, grouping and hierarchical functions now come
+  directly from `kale.embed.multimodal_fusion`; the duplicate KaleCardiac public
+  functions (`mixture_of_experts`, `mean_of_experts`, `hierarchical_experts`,
+  `wasserstein_barycenter`, `expert_groups`) are removed, and importing one names the
+  PyKale function that replaced it. This changes those import paths and their direct
+  return value from `GaussianPosterior` to a `(mean, log_var)` tensor pair. Cardiac's
+  `build_expert_fusion` and `EXPERT_FUSIONS` retain their names, options and
+  `GaussianPosterior` result for models. PyKale rejects non-binary masks, non-tensor
+  masks, mismatched or non-floating dtypes and non-finite weights on these shared
+  methods. Cardiac's `product_of_experts` remains because its masked-product API
+  differs.
 - **What a dependency already provides is no longer duplicated.** Transforms are chained
   with `torchvision.transforms.Compose`, replacing `SignalPipeline`, `ImagePipeline` and
   `step_name`. Tasks call PyTorch's losses directly, replacing `binary_cross_entropy`,

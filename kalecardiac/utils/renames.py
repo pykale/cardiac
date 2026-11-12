@@ -54,7 +54,15 @@ RENAMED: dict[str, dict[str, str]] = {
         "ImagePipeline": "removed: use torchvision.transforms.Compose",
         "step_name": "removed: the repr of a torchvision.transforms.Compose names each step",
     },
-    "kalecardiac.model.layers": {"reparameterise": "reparameterize", "expert_groups": "get_expert_groups"},
+    "kalecardiac.model.layers": {
+        "reparameterise": "reparameterize",
+        "expert_groups": "removed: use kale.embed.multimodal_fusion.expert_groups",
+        "get_expert_groups": "removed: use kale.embed.multimodal_fusion.expert_groups",
+        "hierarchical_experts": "removed: use kale.embed.multimodal_fusion.hierarchical_experts",
+        "mean_of_experts": "removed: use kale.embed.multimodal_fusion.mean_of_experts",
+        "mixture_of_experts": "removed: use kale.embed.multimodal_fusion.mixture_of_experts",
+        "wasserstein_barycenter": "removed: use kale.embed.multimodal_fusion.wasserstein_barycenter",
+    },
     "kalecardiac.model.embed": {"freeze": "removed: use the module's own requires_grad_(False)"},
     "kalecardiac.model.predict": {
         "binary_cross_entropy": "removed: use torch.nn.functional.binary_cross_entropy_with_logits",
