@@ -139,6 +139,22 @@ class TestRegistry:
         torch.testing.assert_close(tiny.mean, unit.mean)
         torch.testing.assert_close(tiny.log_var, unit.log_var)
 
+    @pytest.mark.parametrize(
+        "method,option,value",
+        [
+            ("moe", "weights", torch.arange(1.0, 6.0)),
+            ("barycenter", "weights", torch.arange(1.0, 6.0)),
+            ("hime", "num_groups", 2),
+        ],
+    )
+    def test_registry_options_can_be_passed_positionally(self, method, option, value, experts):
+        mean, log_var = experts
+        mask = torch.ones(mean.shape[:2])
+        positional = EXPERT_FUSIONS[method](mean, log_var, mask, value)
+        keyword = EXPERT_FUSIONS[method](mean, log_var, mask=mask, **{option: value})
+        assert torch.equal(positional.mean, keyword.mean)
+        assert torch.equal(positional.log_var, keyword.log_var)
+
     def test_tiny_equal_weights_average_two_experts(self):
         mean = torch.tensor([[[0.0]], [[10.0]]])
         fused = build_expert_fusion("moe", weights=torch.tensor([1e-12, 1e-12]))(mean, torch.zeros_like(mean))
