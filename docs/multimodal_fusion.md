@@ -4,7 +4,7 @@ Cardiac modalities are **incommensurable**. A ten-second twelve-lead recording i
 
 KaleCardiac fuses at two levels:
 
-- **Latent fusion** combines one Gaussian distribution per modality. `MultimodalVAE` selects it with `FUSION.LATENT_METHOD`. PyKale implements the shared Gaussian calculations in `kale.embed.multimodal_fusion`; `kalecardiac.model.layers.gaussian` adapts their results to `GaussianPosterior` for Cardiac models.
+- **Latent fusion** combines one Gaussian distribution per modality. `MultimodalVAE` selects it with `FUSION.LATENT_METHOD`, and the methods are in `kalecardiac.model.layers.gaussian`.
 - **Embedding fusion** combines one vector per modality. It is used by `MultimodalPredictor`, configured with `FUSION.METHOD`, and implemented in `kalecardiac.model.embed.multimodal_fusion`.
 
 They are independent: either changes without the other.
@@ -15,7 +15,7 @@ They are independent: either changes without the other.
 
 Each modality's encoder proposes a diagonal Gaussian over a shared latent space. The question every multimodal VAE answers differently is: **given one Gaussian per modality, what is the joint posterior?**
 
-All five answers take the same shapes — `mean` and `log_var` of `(M, B, D)` for `M` experts, and an optional `(M, B)` mask — so Cardiac models swap between them with a configuration string. Call the shared methods directly from `kale.embed.multimodal_fusion` for a `(mean, log_var)` tensor pair; `build_expert_fusion` returns a `GaussianPosterior` for Cardiac models.
+All five answers take the same shapes — `mean` and `log_var` of `(M, B, D)` for `M` experts, and an optional `(M, B)` mask — so Cardiac models swap between them with a configuration string. Each returns a `GaussianPosterior`.
 
 ### Product of experts (`poe`)
 

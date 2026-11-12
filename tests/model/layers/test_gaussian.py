@@ -269,3 +269,45 @@ class TestGaussianHead:
     def test_non_positive_widths_are_rejected(self):
         with pytest.raises(ValueError, match="must be positive"):
             GaussianHead(0, 4)
+
+
+class TestKaleCardiacImports:
+    """The fusion names KaleCardiac kept return PyKale's values as a posterior."""
+
+    @pytest.mark.parametrize(
+        "name,kwargs",
+        [
+            ("mixture_of_experts", {"weights": torch.tensor([1.0, 2.0, 3.0, 4.0, 5.0])}),
+            ("mean_of_experts", {}),
+            ("wasserstein_barycenter", {"weights": torch.tensor([1.0, 2.0, 3.0, 4.0, 5.0])}),
+            ("hierarchical_experts", {"num_groups": 2}),
+        ],
+    )
+    def test_returns_pykale_values_as_a_posterior(self, name, kwargs, experts):
+        import kale.embed.multimodal_fusion as core
+
+        import kalecardiac.model.layers as layers
+
+        mean, log_var = experts
+        mask = torch.ones(mean.shape[:2])
+        mask[0, 0] = 0.0
+        fused = getattr(layers, name)(mean, log_var, mask, **kwargs)
+        core_mean, core_log_var = getattr(core, name)(mean, log_var, mask, **kwargs)
+        assert isinstance(fused, GaussianPosterior)
+        assert torch.equal(fused.mean, core_mean)
+        assert torch.equal(fused.log_var, core_log_var)
+
+    def test_the_registry_uses_the_kept_functions(self):
+        import kalecardiac.model.layers as layers
+
+        assert EXPERT_FUSIONS["moe"] is layers.mixture_of_experts
+        assert EXPERT_FUSIONS["mean"] is layers.mean_of_experts
+        assert EXPERT_FUSIONS["hime"] is layers.hierarchical_experts
+        assert EXPERT_FUSIONS["barycenter"] is layers.wasserstein_barycenter
+
+    def test_get_expert_groups_matches_pykale(self):
+        from kale.embed.multimodal_fusion import expert_groups
+
+        from kalecardiac.model.layers import get_expert_groups
+
+        assert get_expert_groups(13, 4) == expert_groups(13, 4) == [[0, 1, 2, 3], [4, 5, 6], [7, 8, 9], [10, 11, 12]]

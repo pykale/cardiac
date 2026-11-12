@@ -192,8 +192,7 @@ that could construct only one of them could not pretrain.
 pressure are both a binary label; a mean pulmonary arterial pressure is a number. The
 metric set is chosen for a clinical reading rather than a leaderboard — sensitivity and
 specificity alongside ROC-AUC, because on a cohort with 20% positives calling everybody
-negative scores 80% accuracy. PyKale computes the general metrics; KaleCardiac keeps
-prediction records and adapters for its fold and bootstrap call contracts.
+negative scores 80% accuracy.
 
 `interpret` answers three different questions and keeps them apart:
 
@@ -218,7 +217,7 @@ KaleCardiac is built on PyKale rather than beside it:
 | `kale.embed.base_cnn.BaseCNN` | Convolution-block construction |
 | `kale.embed.multimodal_fusion.ProductOfExperts` | The product-of-experts closed form |
 | `kale.prepdata.signal_transform.interpolate_signal` | Filling dropped samples |
-| `kale.evaluate` classification, regression and fold summaries | Computing shared metrics directly; KaleCardiac retains only prediction records and adapters for its different call contracts |
+| `kale.evaluate` classification, regression and fold summaries | Computing the metrics `kalecardiac.evaluate` exports under its own names, plus its bootstrap and fold-pooling adapters |
 | `kale.pipeline.base_nn_trainer.BaseNNTrainer` | The trainer's Lightning scaffolding |
 | `kale.utils.seed.set_seed`, `kale.utils.initialize_nn` | Seeding and head initialisation |
 
