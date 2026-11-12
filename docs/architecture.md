@@ -192,9 +192,7 @@ that could construct only one of them could not pretrain.
 pressure are both a binary label; a mean pulmonary arterial pressure is a number. The
 metric set is chosen for a clinical reading rather than a leaderboard — sensitivity and
 specificity alongside ROC-AUC, because on a cohort with 20% positives calling everybody
-negative scores 80% accuracy. PyKale computes the general metrics; KaleCardiac keeps
-their names, its prediction records, and adapters for its fold and bootstrap call
-contracts.
+negative scores 80% accuracy.
 
 `interpret` answers three different questions and keeps them apart:
 

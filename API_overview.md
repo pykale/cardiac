@@ -181,9 +181,7 @@ Steps are chained with `torchvision.transforms.Compose`; a source's `transform` 
 ### Gaussian experts — the mathematical core
 
 All take `mean` and `log_var` of `(M, B, D)` and an optional `(M, B)` mask, and return a
-`GaussianPosterior`. The averaging, barycenter, grouping and hierarchical calculations are
-PyKale's (`kale.embed.multimodal_fusion`), whose own functions return a `(mean, log_var)`
-tensor pair instead.
+`GaussianPosterior`.
 
 | Name | Combines by |
 | --- | --- |
@@ -299,9 +297,6 @@ new trainer.
 
 ## `evaluate` — scoring, by task
 
-The classification and regression metrics and `summarize_folds` are computed by PyKale
-(`kale.evaluate`); KaleCardiac keeps their names and signatures.
-
 | Name | Returns |
 | --- | --- |
 | `roc_auc(labels, scores)` | The area |
@@ -323,7 +318,7 @@ Binary labels must be exactly 0 or 1, and multiclass labels must be valid class 
 `MetricError` is raised where a metric cannot be computed — a one-class split, say —
 which a trainer treats as "skip this epoch's metric" rather than a failure.
 
-Scores may be logits or probabilities throughout. PyKale infers the score type from its values by default: binary scores in `[0, 1]` and multiclass rows that form distributions are read as probabilities. If logits happen to look like probabilities, pass `score_type="logit"` to the PyKale function. Multiclass logits pass through a softmax because one-versus-rest ranking can change after that conversion.
+Scores may be logits or probabilities throughout. Binary scores in `[0, 1]` and multiclass rows in `[0, 1]` that sum to one are read as probabilities, and anything else as logits. Multiclass logits pass through a softmax because one-versus-rest ranking can change after that conversion.
 
 `pool_folds` pairs each fold's targets with its scores and rejects a fold with unequal lengths. Pool predictions from different fitted models only when their scores share a comparable scale, such as calibrated probabilities; otherwise summarize the metric calculated separately for each fold.
 

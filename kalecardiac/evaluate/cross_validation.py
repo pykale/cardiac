@@ -17,10 +17,7 @@ resamples *subjects* within a split instead, which answers the different and usu
 more useful question of how much the number would move on another cohort of the same
 size.
 
-:func:`summarize_folds` is PyKale's. The other functions adapt PyKale to Cardiac's data
-or reporting contract: ``bootstrap_ci`` keeps its labels-first call and seed of 2026,
-``pool_folds`` accepts ``SplitPredictions``, and ``flatten_fold_summary`` makes a row for
-a results table.
+:func:`flatten_fold_summary` turns a fold summary into one row of a results table.
 """
 
 from __future__ import annotations
@@ -36,12 +33,25 @@ from numpy.typing import ArrayLike
 
 
 def summarize_folds(fold_metrics: Sequence[Mapping[str, float]], keys: Sequence[str] | None = None) -> dict:
-    """Mean and standard deviation of each metric across folds; see PyKale's ``summarize_folds``."""
+    """Mean and standard deviation of each metric across folds.
+
+    Args:
+        fold_metrics: One mapping of metric name to value per fold, as
+            :func:`~kalecardiac.evaluate.binary_metrics` returns them.
+        keys: Which metrics to summarise. ``None`` summarises every key whose value is
+            numeric in every fold, which skips the nested confusion matrix.
+
+    Returns:
+        ``{metric: {"mean": ..., "std": ..., "values": [...]}}`` plus ``"n_folds"``.
+
+    Raises:
+        MetricError: If no fold is given.
+    """
     return _kale_summarize_folds(fold_metrics, keys)
 
 
 def flatten_fold_summary(summary: Mapping) -> dict:
-    """A PyKale fold summary as flat columns, for one row of a results table.
+    """A fold summary as flat columns, for one row of a results table.
 
     Each metric's mean and spread become a column of their own, and the per-fold values
     stay in the summary::

@@ -2,7 +2,6 @@
 
 Every multimodal VAE in this package is the same model with a different answer to one
 question: *given one diagonal Gaussian per modality, what is the joint posterior?*
-Each function below returns a :class:`GaussianPosterior`.
 
 .. code-block:: text
 
@@ -24,10 +23,6 @@ for ``M`` experts, and the optional ``mask`` is ``(M, B)``, one where that exper
 present for that sample. A masked-out expert contributes nothing -- negligible
 precision to a product, zero share to an average -- which is how a model trained on
 twelve leads runs on six without being retrained.
-
-The averaging, barycenter, grouping and hierarchical calculations are PyKale's
-(:mod:`kale.embed.multimodal_fusion`). The functions here keep KaleCardiac's names and
-return a :class:`GaussianPosterior`; PyKale's own return a ``(mean, log_var)`` pair.
 """
 
 from __future__ import annotations
@@ -211,11 +206,27 @@ def mixture_of_experts(
 ) -> GaussianPosterior:
     """Fuse experts as a weighted average of their parameters.
 
-    Computed by :func:`kale.embed.multimodal_fusion.mixture_of_experts`, which documents
-    the arguments and checks.
+    The joint mean and log-variance are weighted averages of the experts' means and
+    log-variances, which keeps the result a single Gaussian with a closed-form KL term.
+    It is neither a probability mixture nor a moment-matched approximation. With equal
+    weights no expert dominates: a confident one and an uninformative one contribute
+    equally, which keeps a weak modality from being ignored.
+
+    Args:
+        mean: ``(M, B, D)`` expert means.
+        log_var: ``(M, B, D)`` expert log-variances, of the same floating dtype.
+        mask: ``(M, B)``, one or ``True`` where the expert is present. Absent experts
+            take no share, and a sample with no present expert falls back to an equal
+            average of all of them.
+        weights: ``(M,)`` or ``(M, B)`` non-negative relative weights; only their ratio
+            matters. ``None`` weights the experts equally.
 
     Returns:
         The ``(B, D)`` joint posterior.
+
+    Raises:
+        ValueError: If the shapes are inconsistent, the mask is not binary, or a weight
+            is negative or not finite.
     """
     joint_mean, joint_log_var = _kale_mixture_of_experts(mean, log_var, mask=mask, weights=weights)
     return GaussianPosterior(joint_mean, joint_log_var)
@@ -224,10 +235,19 @@ def mixture_of_experts(
 def mean_of_experts(mean: Tensor, log_var: Tensor, mask: Tensor | None = None) -> GaussianPosterior:
     """Fuse experts as an unweighted mean of their parameters.
 
-    Computed by :func:`kale.embed.multimodal_fusion.mean_of_experts`.
+    :func:`mixture_of_experts` with equal weights, named separately because it is the
+    plainest possible fusion and so the baseline an ablation compares against.
+
+    Args:
+        mean: ``(M, B, D)`` expert means.
+        log_var: ``(M, B, D)`` expert log-variances, of the same floating dtype.
+        mask: ``(M, B)``, one or ``True`` where the expert is present.
 
     Returns:
         The ``(B, D)`` joint posterior.
+
+    Raises:
+        ValueError: If the shapes are inconsistent or the mask is not binary.
     """
     joint_mean, joint_log_var = _kale_mean_of_experts(mean, log_var, mask=mask)
     return GaussianPosterior(joint_mean, joint_log_var)
@@ -241,10 +261,25 @@ def wasserstein_barycenter(
 ) -> GaussianPosterior:
     """Fuse experts as their 2-Wasserstein barycenter.
 
-    Computed by :func:`kale.embed.multimodal_fusion.wasserstein_barycenter`.
+    For diagonal Gaussians the barycenter has the weighted mean of the means and the
+    weighted mean of the *standard deviations* -- not of the variances, and not of the
+    precisions. Unlike a product it cannot become more certain than every available
+    expert, and unlike a parameter average it averages in the scale a distance is
+    measured in.
+
+    Args:
+        mean: ``(M, B, D)`` expert means.
+        log_var: ``(M, B, D)`` expert log-variances, of the same floating dtype.
+        mask: ``(M, B)``, one or ``True`` where the expert is present.
+        weights: ``(M,)`` or ``(M, B)`` non-negative relative weights; only their ratio
+            matters. ``None`` weights equally.
 
     Returns:
         The ``(B, D)`` joint posterior.
+
+    Raises:
+        ValueError: If the shapes are inconsistent, the mask is not binary, or a weight
+            is negative or not finite.
     """
     joint_mean, joint_log_var = _kale_wasserstein_barycenter(mean, log_var, mask=mask, weights=weights)
     return GaussianPosterior(joint_mean, joint_log_var)
@@ -258,10 +293,28 @@ def hierarchical_experts(
 ) -> GaussianPosterior:
     """Fuse experts hierarchically: a product within groups, an average across them.
 
-    Computed by :func:`kale.embed.multimodal_fusion.hierarchical_experts`.
+    The hierarchical modality expert (HiME) mechanism of LS-EMVAE. Experts that should
+    reinforce one another are multiplied, and the group posteriors are then averaged, so
+    the joint gains the sharpness of a product without letting one over-confident group
+    determine the latent on its own.
+
+    Grouping is contiguous over the expert axis, so the *order* experts are stacked in
+    decides which reinforce which. For an ECG stacked in the conventional lead order
+    that puts the limb leads in the early groups and the precordial leads in the later
+    ones. A group whose experts are all absent takes no share of the average.
+
+    Args:
+        mean: ``(M, B, D)`` expert means.
+        log_var: ``(M, B, D)`` expert log-variances, of the same floating dtype.
+        mask: ``(M, B)``, one or ``True`` where the expert is present.
+        num_groups: Groups to divide the experts into.
 
     Returns:
         The ``(B, D)`` joint posterior.
+
+    Raises:
+        ValueError: If the shapes are inconsistent, the mask is not binary, or
+            ``num_groups`` is below one.
     """
     joint_mean, joint_log_var = _kale_hierarchical_experts(mean, log_var, mask=mask, num_groups=num_groups)
     return GaussianPosterior(joint_mean, joint_log_var)
@@ -270,13 +323,25 @@ def hierarchical_experts(
 def get_expert_groups(num_experts: int, num_groups: int) -> list[list[int]]:
     """Divide ``num_experts`` expert indices into ``num_groups`` contiguous groups.
 
-    Computed by :func:`kale.embed.multimodal_fusion.expert_groups`.
+    Every expert lands in exactly one group, and the groups differ in size by at most
+    one: thirteen experts (twelve leads and the prior) in four groups gives sizes
+    ``[4, 3, 3, 3]``. See :doc:`the model reference </models>` for why this matters.
+
+    Args:
+        num_experts: How many experts there are.
+        num_groups: How many groups to form. Clamped to ``num_experts``, so asking for
+            more groups than experts gives one expert per group.
+
+    Returns:
+        Expert indices per group, in order.
+
+    Raises:
+        ValueError: If either argument is below one.
     """
     return _kale_expert_groups(num_experts, num_groups)
 
 
-#: Cardiac model configuration names. PyKale owns the Gaussian calculations;
-#: these callables retain the GaussianPosterior result expected by Cardiac models.
+#: Latent fusions by configuration name, each returning a GaussianPosterior.
 EXPERT_FUSIONS: dict[str, Callable[..., GaussianPosterior]] = {
     "poe": product_of_experts,
     "moe": mixture_of_experts,

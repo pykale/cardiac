@@ -13,9 +13,6 @@ Four modules, named for the task they score and the thing they produce:
 pressure are both a binary label; a mean pulmonary arterial pressure is a number. Which
 endpoint a cohort defines, and what a clinically useful operating point on it is, belong
 to the experiment -- the library supplies the metrics that decision is expressed in.
-
-The classification and regression metrics and ``summarize_folds`` are computed by
-:mod:`kale.evaluate`; KaleCardiac keeps their names and signatures.
 """
 
 from typing import TYPE_CHECKING

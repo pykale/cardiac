@@ -21,8 +21,6 @@ kalecardiac.model.layers.conv2d
 kalecardiac.model.layers.gaussian
 ---------------------------------
 
-The Gaussian averaging, barycenter, grouping and hierarchical functions are computed by ``kale.embed.multimodal_fusion``. KaleCardiac keeps their names and returns a ``GaussianPosterior``; PyKale's own functions return a ``(mean, log_var)`` tensor pair.
-
 .. automodule:: kalecardiac.model.layers.gaussian
    :members:
    :show-inheritance:
