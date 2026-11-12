@@ -202,8 +202,9 @@ def product_of_experts(mean: Tensor, log_var: Tensor, mask: Tensor | None = None
 def _posterior_adapter(fusion: Callable[..., tuple[Tensor, Tensor]]) -> Callable[..., GaussianPosterior]:
     """Adapt a PyKale tensor pair to the posterior returned by Cardiac models."""
 
-    def fuse(mean: Tensor, log_var: Tensor, mask: Tensor | None = None, **kwargs) -> GaussianPosterior:
-        joint_mean, joint_log_var = fusion(mean, log_var, mask=mask, **kwargs)
+    def fuse(mean: Tensor, log_var: Tensor, mask: Tensor | None = None, *args, **kwargs) -> GaussianPosterior:
+        # Options such as weights or num_groups may be passed positionally, as before the migration.
+        joint_mean, joint_log_var = fusion(mean, log_var, mask, *args, **kwargs)
         return GaussianPosterior(joint_mean, joint_log_var)
 
     return fuse
