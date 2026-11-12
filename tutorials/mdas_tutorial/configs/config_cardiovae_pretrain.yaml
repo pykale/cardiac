@@ -1,0 +1,46 @@
+# Pretraining in the tutorial (tutorial-CardioVAE.ipynb): CardioVAE on the tutorial dataset's
+# unlabelled ECG-CXR pairs. Merged onto KaleCardiac's defaults, kalecardiac.config, so it needs
+# nothing beyond the installed package.
+DATASET:
+  # The unlabelled cohort, as the notebook's download unpacks it: ECG/ and CXR/, each holding
+  # one folder per subject with that subject's DICOM file.
+  ROOT: "data/kalecardiac_pretraining"
+
+ECG:
+  # The leads the model reads, in its order -- the order the published CardioVAE was
+  # pretrained in, aVF before aVL. Each is found by name in the DICOM header, whatever
+  # order a file stores them in.
+  LEADS: ["I", "II", "III", "aVR", "aVF", "aVL", "V1", "V2", "V3", "V4", "V5", "V6"]
+  # Ten seconds at 500 Hz of every lead, normalized lead by lead, then interleaved sample by
+  # sample into one channel: the 60,000-sample strip CardioVAE reads.
+  SAMPLING_RATE: 500
+  LENGTH: 60000
+  NUM_CHANNELS: 1
+  NORMALIZE: true
+
+IMAGE:
+  # Resized and scaled to [0, 1], which the image decoder's sigmoid reproduces.
+  SIZE: [224, 224]
+
+MODEL:
+  # Width of the latent space both modalities share.
+  LATENT_DIM: 128
+
+OBJECTIVE:
+  # The tri-stream ELBO: one through both modalities, and one through each alone, so each
+  # encoder stays usable when the other modality is missing. The ECG's reconstruction is
+  # weighted ten times the CXR's, the summed reconstruction scaled to sit beside the KL
+  # term, and the KL term annealed in over the run.
+  UNIMODAL_STREAMS: true
+  RECONSTRUCTION_WEIGHTS: ["ecg:10", "cxr:1"]
+  SCALE_FACTOR: 0.0001
+  ANNEALING_EPOCHS: 10
+
+SOLVER:
+  SEED: 123
+  BASE_LR: 0.001
+  MAX_EPOCHS: 10
+  BATCH_SIZE: 4
+
+OUTPUT:
+  OUT_DIR: "outputs/pretraining"

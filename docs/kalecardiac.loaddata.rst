@@ -4,10 +4,10 @@ Load data: ``kalecardiac.loaddata``
 .. automodule:: kalecardiac.loaddata
    :no-members:
 
-kalecardiac.loaddata.ecg\_access
---------------------------------
+kalecardiac.loaddata.signal\_access
+-----------------------------------
 
-.. automodule:: kalecardiac.loaddata.ecg_access
+.. automodule:: kalecardiac.loaddata.signal_access
    :members:
    :show-inheritance:
 

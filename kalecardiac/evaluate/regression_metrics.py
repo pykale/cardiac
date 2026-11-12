@@ -11,12 +11,17 @@ measurement error; mean absolute error says the same thing but is not dominated 
 few subjects furthest out; and R-squared says how much of the cohort's variation the
 model accounts for, which is the only one of the three that is comparable across
 endpoints.
+
+Each is scikit-learn's. What this module adds is the clinical summary around them --
+the signed bias, the unit, and an R-squared that is reported as missing, rather than as
+a number, when the targets do not vary.
 """
 
 from __future__ import annotations
 
 import numpy as np
 from numpy.typing import ArrayLike
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 
 from kalecardiac.evaluate.classification_metrics import MetricError
 
@@ -29,36 +34,6 @@ def _as_pair(targets: ArrayLike, predictions: ArrayLike) -> tuple[np.ndarray, np
     if targets.size == 0:
         raise MetricError("a regression metric needs at least one subject")
     return targets, predictions
-
-
-def r2_score(targets: ArrayLike, predictions: ArrayLike) -> float:
-    """Coefficient of determination.
-
-    One minus the ratio of the residual sum of squares to the total sum of squares:
-    0 means no better than predicting the cohort mean, and a negative value means
-    worse than that, which is ordinary for a model that has not learned anything yet.
-
-    Args:
-        targets: ``(N,)`` measured values.
-        predictions: ``(N,)`` predicted values.
-
-    Returns:
-        The coefficient.
-
-    Raises:
-        MetricError: If the arrays disagree in length, are empty, or every target is
-            the same value -- in which case the total sum of squares is zero and the
-            ratio undefined.
-    """
-    targets, predictions = _as_pair(targets, predictions)
-    total = float(((targets - targets.mean()) ** 2).sum())
-    if total == 0.0:
-        raise MetricError(
-            "every target has the same value, so there is no variation for R-squared to explain; report the "
-            "root mean squared error instead"
-        )
-    residual = float(((targets - predictions) ** 2).sum())
-    return 1.0 - residual / total
 
 
 def regression_metrics(targets: ArrayLike, predictions: ArrayLike, unit: str | None = None) -> dict:
@@ -78,19 +53,15 @@ def regression_metrics(targets: ArrayLike, predictions: ArrayLike, unit: str | N
         MetricError: If the arrays disagree in length or are empty.
     """
     targets, predictions = _as_pair(targets, predictions)
-    residual = predictions - targets
-
-    summary = {
+    return {
         "n": int(targets.size),
-        "rmse": float(np.sqrt((residual**2).mean())),
-        "mae": float(np.abs(residual).mean()),
+        "rmse": float(np.sqrt(mean_squared_error(targets, predictions))),
+        "mae": float(mean_absolute_error(targets, predictions)),
         # Signed, not absolute: a model that systematically over-predicts a pressure is
         # wrong in a way a symmetric error cannot show.
-        "bias": float(residual.mean()),
+        "bias": float(np.mean(predictions - targets)),
         "unit": unit,
+        # Undefined when every target is the same value: scikit-learn reports 0 or 1
+        # there, which a results table would show as a result.
+        "r2": float(r2_score(targets, predictions)) if np.ptp(targets) > 0 else None,
     }
-    try:
-        summary["r2"] = r2_score(targets, predictions)
-    except MetricError:
-        summary["r2"] = None
-    return summary

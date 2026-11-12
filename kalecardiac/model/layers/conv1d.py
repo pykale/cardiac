@@ -14,10 +14,11 @@ so a cohort sampled at another rate or a model with another depth cannot use the
 :class:`Conv1dEncoder` with the default arguments and ``length`` divisible by eight is
 the same architecture, parameter for parameter.
 
-The decoder's transposed convolutions use ``kernel_size=4, stride=2, padding=1``, which
-doubles the length exactly. The equivalent ``kernel_size=3`` with ``output_padding=1``
-also doubles it, and is what CardioVAE's decoder uses; the two differ only in the
-kernel's width, and :func:`Conv1dDecoder` takes whichever is asked for.
+A decoder layer multiplies the length by its stride exactly, whatever the kernel: the
+padding is chosen to make it so. With the default ``kernel_size=4`` that is padding 1;
+with ``kernel_size=3`` it is padding 1 and output padding 1, which is PyKale's
+``SignalVAEDecoder`` layer for layer and what :class:`~kalecardiac.model.embed.CardioVAE`
+builds, so the published weights load into it.
 """
 
 from __future__ import annotations
@@ -168,8 +169,8 @@ class Conv1dDecoder(nn.Module):
         length: Samples per channel to reconstruct.
         channels: Channels of each transposed convolution, from the widest inwards.
             The reverse of an encoder's ``channels`` by convention.
-        kernel_size: Kernel width. 4 with ``padding=1`` doubles the length exactly;
-            3 with ``output_padding=1`` does too.
+        kernel_size: Kernel width. Any width doubles the length exactly at stride 2;
+            3 matches PyKale's ``SignalVAEDecoder``.
         stride: Stride of each transposed convolution.
         activation: Non-linearity between layers.
         output_activation: Applied to the reconstruction. ``None`` leaves it linear,
@@ -210,7 +211,10 @@ class Conv1dDecoder(nn.Module):
         self.start_length = max(self.length // upsample, 1)
         self.project = nn.Linear(self.latent_dim, self.channels[0] * self.start_length)
 
-        padding = (kernel_size - stride) // 2
+        # The padding that makes each layer multiply the length by exactly ``stride``:
+        # kernel 4 gets padding 1, kernel 3 gets padding 1 and output padding 1 -- the
+        # layout PyKale's VAE decoders, and the published CardioVAE, use.
+        padding = max((kernel_size - stride + 1) // 2, 0)
         output_padding = stride - kernel_size + 2 * padding
         layers: list[nn.Module] = []
         widths = [*self.channels, self.out_channels]

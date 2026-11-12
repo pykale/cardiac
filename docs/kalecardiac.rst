@@ -10,9 +10,3 @@ kalecardiac.config
 .. automodule:: kalecardiac.config
    :members:
    :show-inheritance:
-
-kalecardiac.auto
-----------------
-
-.. automodule:: kalecardiac.auto
-   :no-members:

@@ -15,6 +15,8 @@ endpoint a cohort defines, and what a clinically useful operating point on it is
 to the experiment -- the library supplies the metrics that decision is expressed in.
 """
 
+from typing import TYPE_CHECKING
+
 from kalecardiac.evaluate.classification_metrics import (
     MetricError,
     binary_metrics,
@@ -24,28 +26,36 @@ from kalecardiac.evaluate.classification_metrics import (
     roc_auc,
     sensitivity_specificity,
 )
-from kalecardiac.evaluate.cross_validation import bootstrap_ci, pool_folds, summarise_folds
+from kalecardiac.evaluate.cross_validation import bootstrap_ci, flatten_fold_summary, pool_folds, summarize_folds
 from kalecardiac.evaluate.predictions import SplitPredictions, predict_split, save_predictions
-from kalecardiac.evaluate.regression_metrics import r2_score, regression_metrics
+from kalecardiac.evaluate.regression_metrics import regression_metrics
+from kalecardiac.utils.renames import renamed
 
 __all__ = [
     "MetricError",
     "SplitPredictions",
     "binary_metrics",
     "bootstrap_ci",
+    "flatten_fold_summary",
     "mean_roc_curve",
     "multiclass_metrics",
     "multiclass_roc_auc",
     "pool_folds",
     "predict_split",
-    "r2_score",
     "regression_metrics",
     "roc_auc",
     "save_predictions",
     "sensitivity_specificity",
-    "summarise_folds",
+    "summarize_folds",
 ]
 
 
 def __dir__():
     return sorted(__all__)
+
+
+if not TYPE_CHECKING:
+    # At runtime only: a module-level __getattr__ that a type checker saw would make
+    # every misspelt import type-check.
+    def __getattr__(name: str):
+        raise renamed(__name__, name)

@@ -8,6 +8,7 @@ endpoint, a pretraining stage, a fine-tuning stage and a report.
 | [`cardiovae_multimodal/`](cardiovae_multimodal/) | Chest X-ray + ECG | Product-of-experts VAE, tri-stream ELBO | Cardiac haemodynamic instability |
 | [`lsemvae_ecg/`](lsemvae_ecg/) | Multi-lead ECG, one modality per lead | Hierarchical-expert VAE, latent alignment | Pulmonary hypertension |
 | [`synthetic_data.py`](synthetic_data.py) | Synthetic | — | — (no data needed) |
+| [`cli.py`](cli.py) | — | What both command lines share: the compared groups, the configuration, the table | — |
 
 ## What belongs here, and what does not
 
@@ -30,22 +31,24 @@ In practice it means an example never defines a model:
 
 ```python
 # What an example does
-from kalecardiac.model.embed import LSEMVAE, MultimodalPredictor
-from kalecardiac.pipeline import CardiacTrainer, ClassificationTask, ReconstructionTask
+from kalecardiac.auto import cross_validate, get_folds, pretrain
+from kalecardiac.model.embed import LSEMVAE
 
 model = LSEMVAE(leads=cfg.ECG.LEADS, length=cfg.ECG.LENGTH, fusion=cfg.FUSION.LATENT_METHOD)
+pretrained = pretrain(cfg, model, unlabelled, out_dir)
+summary = cross_validate(cfg, pretrained, sources, target, get_folds(cfg, table), out_dir / "six_leads")
 ```
 
 ## Structure
 
-Every example has the same four parts, so moving between them costs nothing:
+Every example has the same five parts, so moving between them costs nothing:
 
 ```text
 <example>/
 ├── README.md      what the study is, what data it needs, how to read its output
 ├── config.py      the package defaults extended with this experiment's settings
 ├── data.py        where the cohort's files are, and what its columns mean
-├── runner.py      the orchestration: pretrain, fold, fine-tune, score, report
+├── runner.py      what is compared, the model, and the report; the workflow is kalecardiac.auto's
 ├── main.py        the command line
 └── configs/
     ├── quick.yaml a synthetic run that finishes in about a minute on a CPU
@@ -93,7 +96,7 @@ another.
 | --- | --- | --- |
 | `cv` (default) | Each of `NUM_FOLDS` folds in turn | The cohort is small, which it usually is |
 | `random` | A fresh stratified draw | A single held-out split is enough |
-| `predefined` | An assignment the study fixed | The cohort publishes one — read it and apply `loaddata.Predefined` |
+| `predefined` | An assignment the study fixed | The cohort publishes one — read it and apply `loaddata.PredefinedSplit` |
 
 Splitting is always subject-level: a subject contributing two recordings has both on the
 same side, and validation is always carved out of the training half, never out of the

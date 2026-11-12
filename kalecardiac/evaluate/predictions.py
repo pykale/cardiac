@@ -14,6 +14,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import torch
@@ -130,7 +131,7 @@ def predict_split(
 def save_predictions(
     out_dir: str | Path,
     predictions: Iterable[SplitPredictions],
-    metrics: Mapping[str, Mapping] | None = None,
+    metrics: Mapping[str, Any] | None = None,
 ) -> tuple[Path, Path | None]:
     """Write predictions, and any metrics, to a directory.
 

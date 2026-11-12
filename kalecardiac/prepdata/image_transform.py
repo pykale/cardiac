@@ -14,19 +14,21 @@ the behaviour identical to what a model's own interpolation would do.
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from functools import partial
 
 import numpy as np
 import torch
 from numpy.typing import ArrayLike
+from torchvision.transforms import Compose
 
-from kalecardiac.prepdata.signal_transform import MIN_SCALE, step_name
+from kalecardiac.prepdata.signal_transform import MIN_SCALE
 
 
-def as_image(value: ArrayLike) -> np.ndarray:
+def check_image(value: ArrayLike) -> np.ndarray:
     """Coerce an image to a 3-D ``(channels, height, width)`` float32 array.
 
     A 2-D input gains a leading channel axis. Unlike
-    :func:`kalecardiac.loaddata.as_image_array` this never moves an axis, because a
+    :func:`kalecardiac.loaddata.check_image_array` this never moves an axis, because a
     transform has not been told how many channels to expect.
 
     Args:
@@ -64,7 +66,7 @@ def resize_image(image: ArrayLike, size: Sequence[int], antialias: bool = True) 
     Raises:
         ValueError: If ``size`` is not two positive integers.
     """
-    array = as_image(image)
+    array = check_image(image)
     if len(size) != 2 or any(int(extent) < 1 for extent in size):
         raise ValueError(f"size must be two positive integers (height, width), got {tuple(size)}")
 
@@ -78,7 +80,7 @@ def resize_image(image: ArrayLike, size: Sequence[int], antialias: bool = True) 
     return np.ascontiguousarray(resized.squeeze(0).numpy(), dtype=np.float32)
 
 
-def scale_image(image: ArrayLike, maximum: float | None = None) -> np.ndarray:
+def scale_image_intensity(image: ArrayLike, maximum: float | None = None) -> np.ndarray:
     """Rescale pixel values to the unit interval.
 
     Args:
@@ -94,7 +96,7 @@ def scale_image(image: ArrayLike, maximum: float | None = None) -> np.ndarray:
     Raises:
         ValueError: If ``maximum`` is not positive.
     """
-    array = as_image(image)
+    array = check_image(image)
     if maximum is None:
         lowest, highest = float(array.min()), float(array.max())
         span = highest - lowest
@@ -106,8 +108,14 @@ def scale_image(image: ArrayLike, maximum: float | None = None) -> np.ndarray:
     return np.clip(array / float(maximum), 0.0, 1.0).astype(np.float32)
 
 
-def standardise_image(image: ArrayLike, mean: Sequence[float] | None = None, std: Sequence[float] | None = None):
+def normalize_image(
+    image: ArrayLike, mean: Sequence[float] | None = None, std: Sequence[float] | None = None
+) -> np.ndarray:
     """Subtract a mean and divide by a standard deviation, per channel.
+
+    With ``mean`` and ``std`` given this is :func:`torchvision.transforms.functional.normalize`
+    on an array; without them it uses the image's own statistics, which torchvision's
+    has no form for and which is what a radiograph from an uncalibrated machine needs.
 
     Args:
         image: ``(channels, height, width)`` image.
@@ -117,20 +125,20 @@ def standardise_image(image: ArrayLike, mean: Sequence[float] | None = None, std
         std: One value per channel. ``None`` uses the image's own channel deviations.
 
     Returns:
-        The standardised image.
+        The normalized image.
 
     Raises:
         ValueError: If a supplied statistic does not have one value per channel.
     """
-    array = as_image(image)
+    array = check_image(image)
     channels = array.shape[0]
 
     if mean is None:
-        centre = array.mean(axis=(1, 2), keepdims=True)
+        center = array.mean(axis=(1, 2), keepdims=True)
     elif len(mean) != channels:
         raise ValueError(f"mean must have one value per channel ({channels}), got {len(mean)}")
     else:
-        centre = np.asarray(mean, dtype=np.float32).reshape(channels, 1, 1)
+        center = np.asarray(mean, dtype=np.float32).reshape(channels, 1, 1)
 
     if std is None:
         scale = array.std(axis=(1, 2), keepdims=True)
@@ -139,73 +147,40 @@ def standardise_image(image: ArrayLike, mean: Sequence[float] | None = None, std
     else:
         scale = np.asarray(std, dtype=np.float32).reshape(channels, 1, 1)
 
-    return ((array - centre) / np.where(scale < MIN_SCALE, 1.0, scale)).astype(np.float32)
+    return ((array - center) / np.where(scale < MIN_SCALE, 1.0, scale)).astype(np.float32)
 
 
-class ImagePipeline:
-    """A sequence of image transforms applied in order.
-
-    The image counterpart of
-    :class:`~kalecardiac.prepdata.signal_transform.SignalPipeline`, and what an image
-    source's ``transform`` argument takes.
-
-    Args:
-        steps: Callables applied left to right, each taking and returning a
-            ``(channels, height, width)`` array.
-
-    Raises:
-        TypeError: If a step is not callable.
-    """
-
-    def __init__(self, steps: Sequence[Callable[[np.ndarray], np.ndarray]]) -> None:
-        for step in steps:
-            if not callable(step):
-                raise TypeError(f"every step must be callable, got {type(step).__name__}")
-        self.steps = list(steps)
-
-    def __call__(self, image: ArrayLike) -> np.ndarray:
-        array = as_image(image)
-        for step in self.steps:
-            array = as_image(step(array))
-        return array
-
-    def __len__(self) -> int:
-        return len(self.steps)
-
-    def __repr__(self) -> str:
-        return f"ImagePipeline([{', '.join(step_name(step) for step in self.steps)}])"
-
-
-def build_image_pipeline(
+def get_image_transform(
     size: Sequence[int],
     scale: bool = True,
     maximum: float | None = None,
-    standardise: bool = False,
-) -> ImagePipeline:
-    """Assemble the usual image preprocessing: resize, then normalise.
+    normalize: bool = False,
+) -> Compose:
+    """Assemble the usual image preprocessing: resize, then rescale or normalize.
 
     Args:
         size: Target ``(height, width)``.
         scale: Rescale pixel values to the unit interval, which is what the cardiac use
             cases' sigmoid image decoder requires of its target.
-        maximum: Value mapped to 1 when scaling; see :func:`scale_image`.
-        standardise: Zero mean and unit variance per channel instead. Mutually
-            exclusive with ``scale``, and incompatible with a sigmoid decoder.
+        maximum: Value mapped to 1 when scaling; see :func:`scale_image_intensity`.
+        normalize: Zero mean and unit variance per channel instead. Mutually exclusive
+            with ``scale``, and incompatible with a sigmoid decoder.
 
     Returns:
-        A pipeline to hand to an image source's ``transform``.
+        A :class:`torchvision.transforms.Compose` of the steps, to hand to an image
+        source's ``transform``.
 
     Raises:
-        ValueError: If both normalisations are requested.
+        ValueError: If both are requested.
     """
-    if scale and standardise:
-        raise ValueError("choose one of scale and standardise: a standardised image is not in [0, 1]")
+    if scale and normalize:
+        raise ValueError("choose one of scale and normalize: a normalized image is not in [0, 1]")
 
-    steps: list[Callable[[np.ndarray], np.ndarray]] = [lambda image: resize_image(image, size)]
-    steps[0].__name__ = f"resize_image({tuple(int(extent) for extent in size)})"  # type: ignore[attr-defined]
+    steps: list[Callable[[np.ndarray], np.ndarray]] = [
+        partial(resize_image, size=tuple(int(extent) for extent in size))
+    ]
     if scale:
-        steps.append(lambda image: scale_image(image, maximum))
-        steps[-1].__name__ = "scale_image"  # type: ignore[attr-defined]
-    elif standardise:
-        steps.append(standardise_image)
-    return ImagePipeline(steps)
+        steps.append(partial(scale_image_intensity, maximum=maximum))
+    elif normalize:
+        steps.append(normalize_image)
+    return Compose(steps)

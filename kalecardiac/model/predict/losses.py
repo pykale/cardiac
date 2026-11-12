@@ -1,8 +1,12 @@
-"""Training objectives, generative and discriminative.
+"""Training objectives for multimodal representation learning.
 
-Two families live here because a cardiac workflow uses both, in that order: a
-generative objective pretrains a representation on unlabelled recordings, and a
-discriminative one fine-tunes it onto a clinical endpoint.
+A cardiac workflow uses two kinds of objective, in this order: a generative one
+pretrains a representation on unlabelled recordings, and a discriminative one fine-tunes
+it onto a clinical endpoint. Only the generative kind lives here. The discriminative
+objectives are PyTorch's own -- ``binary_cross_entropy_with_logits``, ``cross_entropy``
+and ``mse_loss`` -- and each :class:`~kalecardiac.pipeline.PredictionTask` calls them
+directly; a class weight for them comes from scikit-learn's
+:func:`~sklearn.utils.class_weight.compute_class_weight`.
 
 **The generative side.** An ELBO is a reconstruction term plus a KL term, and the whole
 difficulty in a multimodal setting is that those two are not commensurable. A
@@ -237,100 +241,3 @@ def latent_alignment_loss(
         count = weight.sum()
         terms.append((squared * weight).sum() / count if float(count) else (squared * weight).sum())
     return torch.stack(terms).mean()
-
-
-def binary_cross_entropy(prediction: Tensor, targets: Tensor, pos_weight: Tensor | None = None) -> Tensor:
-    """Cross-entropy on logits, for a binary endpoint.
-
-    Logits rather than probabilities: the fused sigmoid-and-log form is the numerically
-    stable one.
-
-    Args:
-        prediction: ``(B,)`` or ``(B, 1)`` logits.
-        targets: ``(B,)`` targets, 1 positive and 0 negative.
-        pos_weight: Weight on the positive class, for an imbalanced endpoint. It
-            changes calibration and the optimisation path but not the ranking, so its
-            effect on ROC-AUC is indirect.
-
-    Returns:
-        A scalar: the mean loss per subject.
-    """
-    return nn.functional.binary_cross_entropy_with_logits(
-        prediction.reshape(-1), targets.reshape(-1).float(), pos_weight=pos_weight
-    )
-
-
-def cross_entropy(prediction: Tensor, targets: Tensor, class_weight: Tensor | None = None) -> Tensor:
-    """Cross-entropy on logits, for a multiclass endpoint.
-
-    Args:
-        prediction: ``(B, num_classes)`` logits.
-        targets: ``(B,)`` class indices. Floats are accepted and rounded, because a
-            target read from a numeric column arrives as a float.
-        class_weight: ``(num_classes,)`` weight per class.
-
-    Returns:
-        A scalar: the mean loss per subject.
-
-    Raises:
-        ValueError: If ``prediction`` is not 2-D with more than one column.
-    """
-    if prediction.dim() != 2 or prediction.shape[1] < 2:
-        raise ValueError(f"expected (batch, num_classes >= 2) logits, got {tuple(prediction.shape)}")
-    return nn.functional.cross_entropy(prediction, targets.reshape(-1).long(), weight=class_weight)
-
-
-def mean_squared_error(prediction: Tensor, targets: Tensor) -> Tensor:
-    """Mean squared error, for a continuous endpoint.
-
-    Args:
-        prediction: ``(B,)`` or ``(B, 1)`` predictions.
-        targets: ``(B,)`` targets.
-
-    Returns:
-        A scalar: the mean squared error per subject.
-    """
-    return nn.functional.mse_loss(prediction.reshape(-1), targets.reshape(-1).float())
-
-
-def class_weight_from_labels(labels: Tensor, num_classes: int = 2) -> Tensor:
-    """Inverse-frequency weights from a training split's labels.
-
-    A cardiac endpoint is often imbalanced -- a few hundred subjects, a fifth of them
-    positive -- and this is the standard counterweight. It is computed from the
-    *training* labels and nowhere else: frequencies taken over the whole cohort carry
-    the test split's class balance into the loss.
-
-    Args:
-        labels: ``(N,)`` class indices from the training split.
-        num_classes: How many classes there are.
-
-    Returns:
-        ``(num_classes,)`` weights, normalised to mean one. A class absent from the
-        split gets weight one rather than infinity.
-
-    Raises:
-        ValueError: If ``num_classes`` is below 2.
-    """
-    if num_classes < 2:
-        raise ValueError(f"num_classes must be at least 2, got {num_classes}")
-
-    counts = torch.bincount(labels.reshape(-1).long(), minlength=num_classes).float()
-    weights = torch.where(counts > 0, counts.sum() / counts.clamp_min(1.0), torch.ones_like(counts))
-    return weights / weights.mean()
-
-
-def positive_weight_from_labels(labels: Tensor) -> Tensor:
-    """The ratio of negatives to positives, for :func:`binary_cross_entropy`.
-
-    Args:
-        labels: ``(N,)`` binary labels from the training split.
-
-    Returns:
-        A 0-d tensor. One when there are no positives, since a weight is meaningless
-        then and a division by zero would poison the whole loss.
-    """
-    values = labels.reshape(-1).float()
-    positives = float(values.sum())
-    negatives = float(values.numel() - positives)
-    return torch.tensor(negatives / positives if positives else 1.0, dtype=torch.float32)

@@ -28,6 +28,12 @@ class TestDefaults:
         # The library must not decide that an ECG has twelve leads, or six.
         assert get_cfg_defaults().ECG.LEADS == []
 
+    def test_no_default_names_an_endpoint(self):
+        # The schema declares what an endpoint is made of; which column, and where the
+        # threshold falls, are a cohort's.
+        endpoint = get_cfg_defaults().ENDPOINT
+        assert (endpoint.NAME, endpoint.VALUE_COLUMN, endpoint.LABEL_COLUMN, endpoint.UNIT) == ("", "", "", "")
+
     def test_the_named_defaults_are_ones_the_library_implements(self):
         cfg = get_cfg_defaults()
         assert cfg.ECG.ENCODER in SIGNAL_ENCODERS
@@ -39,14 +45,26 @@ class TestDefaults:
 
     def test_the_schema_covers_every_stage(self):
         cfg = get_cfg_defaults()
-        for section in ("DATASET", "ECG", "IMAGE", "MODEL", "FUSION", "OBJECTIVE", "SOLVER", "OUTPUT"):
+        sections = (
+            "DATASET",
+            "ENDPOINT",
+            "ECG",
+            "IMAGE",
+            "MODEL",
+            "FUSION",
+            "OBJECTIVE",
+            "SOLVER",
+            "FINETUNE",
+            "OUTPUT",
+        )
+        for section in sections:
             assert isinstance(getattr(cfg, section), CfgNode)
 
     def test_an_experiment_can_extend_it(self):
         cfg = get_cfg_defaults()
-        cfg.ENDPOINT = CfgNode()
-        cfg.ENDPOINT.NAME = "example"
-        assert cfg.ENDPOINT.NAME == "example"
+        cfg.SYNTHETIC = CfgNode()
+        cfg.SYNTHETIC.NUM_SUBJECTS = 8
+        assert cfg.SYNTHETIC.NUM_SUBJECTS == 8
 
     def test_it_merges_from_a_list_as_the_command_line_supplies(self):
         cfg = get_cfg_defaults()
@@ -106,6 +124,8 @@ class TestParseWeights:
 
 ROOT = Path(__file__).resolve().parent.parent
 PACKAGE_CONFIG = ROOT / "kalecardiac" / "config.py"
+#: Where the workflow every example runs through reads the package's keys.
+AUTO = ROOT / "kalecardiac" / "auto"
 EXAMPLES = ("cardiovae_multimodal", "lsemvae_ecg")
 
 #: ``cfg.SECTION.KEY`` used as a value. An assignment (``cfg.SECTION.KEY = ...``) is not
@@ -145,7 +165,10 @@ class TestNoDeadKeys:
     def test_every_key_an_example_sets_is_read_by_that_example(self, example):
         folder = ROOT / "examples" / example
         keys = _declared((folder / "config.py").read_text(encoding="utf-8"), r"\bcfg")
-        text = "\n".join(path.read_text(encoding="utf-8") for path in folder.glob("*.py") if path.name != "config.py")
+        # The example's own modules, and kalecardiac.auto, which every example runs its
+        # workflow through: a key read there takes effect in the example.
+        readers = [path for path in folder.glob("*.py") if path.name != "config.py"] + sorted(AUTO.glob("*.py"))
+        text = "\n".join(path.read_text(encoding="utf-8") for path in readers)
         dead = [f"{section}.{key}" for section, key in keys if not _is_read(section, key, text)]
         assert not dead, (
             f"examples/{example}/config.py sets {dead}, but nothing in that example reads them. A user editing "

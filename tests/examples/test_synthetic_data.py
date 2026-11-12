@@ -75,7 +75,7 @@ class TestMakeSyntheticImageData:
         assert images["a"].shape == (1, 16, 16)
 
     def test_values_lie_in_the_unit_interval(self):
-        # Matching what build_image_pipeline produces and what a sigmoid decoder can
+        # Matching what get_image_transform produces and what a sigmoid decoder can
         # reconstruct; a mismatch makes the reconstruction term minimised by a constant.
         images = make_synthetic_image_data(["a"], size=(16, 16))
         assert images["a"].min() >= 0.0 and images["a"].max() <= 1.0
@@ -140,3 +140,34 @@ class TestMakeSyntheticMultimodalData:
         cohort = make_synthetic_multimodal_data(num_subjects=4, leads=["I", "V1", "V6"], num_samples=64)
         assert cohort.leads == ("I", "V1", "V6")
         assert cohort.ecg["S0000"].shape[0] == 3
+
+
+class TestDicomWriters:
+    def test_a_cohort_is_laid_out_as_a_hospital_exports_one(self, dicom_writers, tmp_path):
+        cohort = dicom_writers.write_synthetic_dicom_cohort(tmp_path, num_subjects=3, num_samples=50, sampling_rate=50)
+        for modality in ("ECG", "CXR"):
+            assert sorted(entry.name for entry in (tmp_path / modality).iterdir()) == sorted(cohort.subject_id)
+            for subject in cohort.subject_id:
+                assert [path.name for path in (tmp_path / modality / subject).rglob("*.dcm")] == ["00000000.dcm"]
+        rows = (tmp_path / "labels.csv").read_text(encoding="utf-8").splitlines()
+        assert rows[0] == "subject_id,label"
+        assert dict(row.split(",") for row in rows[1:]) == {key: str(value) for key, value in cohort.labels.items()}
+
+    def test_an_unlabelled_cohort_has_no_label_file(self, dicom_writers, tmp_path):
+        dicom_writers.write_synthetic_dicom_cohort(tmp_path, num_subjects=2, num_samples=50, with_labels=False)
+        assert not (tmp_path / "labels.csv").exists()
+
+    def test_each_lead_is_named_as_an_ecg_cart_names_it(self, dicom_writers, tmp_path):
+        import pydicom
+
+        from kalecardiac.loaddata import STANDARD_12_LEAD
+
+        path = dicom_writers.write_dicom_ecg(tmp_path / "e.dcm", np.zeros((12, 10)), STANDARD_12_LEAD)
+        channels = pydicom.dcmread(path).WaveformSequence[0].ChannelDefinitionSequence
+        codes = [channel.ChannelSourceSequence[0] for channel in channels]
+        assert codes[0].CodeMeaning == "Lead I (Einthoven)"
+        assert (codes[3].CodeMeaning, codes[3].CodeValue) == ("Lead aVR", "5.6.3-9-62")
+
+    def test_a_radiograph_is_two_dimensional(self, dicom_writers, tmp_path):
+        with pytest.raises(ValueError, match="a radiograph is 2-D"):
+            dicom_writers.write_dicom_image(tmp_path / "x.dcm", np.zeros((3, 4, 4)))

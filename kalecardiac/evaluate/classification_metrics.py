@@ -23,6 +23,7 @@ from contextlib import suppress
 
 import numpy as np
 from numpy.typing import ArrayLike
+from scipy.special import expit, softmax
 from sklearn.metrics import (
     accuracy_score,
     average_precision_score,
@@ -55,7 +56,7 @@ def _as_probabilities(scores: ArrayLike) -> np.ndarray:
     scores = np.asarray(scores, dtype=np.float64).reshape(-1)
     if scores.size and scores.min() >= 0.0 and scores.max() <= 1.0:
         return scores
-    return 1.0 / (1.0 + np.exp(-scores))
+    return expit(scores)
 
 
 def roc_auc(labels: ArrayLike, scores: ArrayLike) -> float:
@@ -157,8 +158,7 @@ def _as_class_probabilities(scores: np.ndarray) -> np.ndarray:
         # Renormalised because a float32 softmax can drift outside scikit-learn's
         # tolerance for "sums to one", which is far tighter than this check's.
         return scores / scores.sum(axis=1, keepdims=True)
-    exponentials = np.exp(scores - scores.max(axis=1, keepdims=True))
-    return exponentials / exponentials.sum(axis=1, keepdims=True)
+    return softmax(scores, axis=1)
 
 
 def _as_multiclass(labels: ArrayLike, scores: ArrayLike) -> tuple[np.ndarray, np.ndarray]:
