@@ -311,3 +311,70 @@ class TestKaleCardiacImports:
         from kalecardiac.model.layers import get_expert_groups
 
         assert get_expert_groups(13, 4) == expert_groups(13, 4) == [[0, 1, 2, 3], [4, 5, 6], [7, 8, 9], [10, 11, 12]]
+
+
+#: The fusions computed by PyKale, by function name and registry name.
+DELEGATED = [
+    ("mixture_of_experts", "moe"),
+    ("mean_of_experts", "mean"),
+    ("hierarchical_experts", "hime"),
+    ("wasserstein_barycenter", "barycenter"),
+]
+
+
+def _entry_points():
+    """Each delegated fusion through its public function and through the registry."""
+    import kalecardiac.model.layers as layers
+
+    for function, key in DELEGATED:
+        yield pytest.param(getattr(layers, function), id=function)
+        yield pytest.param(EXPERT_FUSIONS[key], id=f"EXPERT_FUSIONS[{key}]")
+
+
+class TestDelegatedValidation:
+    """The fusions computed by PyKale reject invalid inputs rather than fusing them."""
+
+    @pytest.mark.parametrize("fusion", list(_entry_points()))
+    def test_a_non_binary_mask_is_rejected(self, fusion, experts):
+        mean, log_var = experts
+        with pytest.raises(ValueError, match="zero or one"):
+            fusion(mean, log_var, torch.full(mean.shape[:2], 0.5))
+
+    @pytest.mark.parametrize("fusion", list(_entry_points()))
+    def test_a_boolean_mask_matches_a_zero_one_mask(self, fusion, experts):
+        mean, log_var = experts
+        present = torch.ones(mean.shape[:2], dtype=torch.bool)
+        present[0, 0] = False
+        as_bool = fusion(mean, log_var, present)
+        as_float = fusion(mean, log_var, present.float())
+        assert torch.equal(as_bool.mean, as_float.mean)
+        assert torch.equal(as_bool.log_var, as_float.log_var)
+
+    @pytest.mark.parametrize("fusion", list(_entry_points()))
+    def test_mixed_floating_dtypes_are_rejected(self, fusion, experts):
+        mean, log_var = experts
+        with pytest.raises(TypeError, match="same floating dtype"):
+            fusion(mean, log_var.double())
+
+    @pytest.mark.parametrize("fusion", list(_entry_points()))
+    def test_a_non_tensor_mask_is_rejected(self, fusion, experts):
+        mean, log_var = experts
+        with pytest.raises(TypeError, match="mask must be a tensor"):
+            fusion(mean, log_var, [[1.0] * mean.shape[1]] * mean.shape[0])
+
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf"), -1.0], ids=["nan", "inf", "negative"])
+    @pytest.mark.parametrize(
+        "fusion",
+        [
+            p
+            for p in _entry_points()
+            if p.id
+            in {"mixture_of_experts", "EXPERT_FUSIONS[moe]", "wasserstein_barycenter", "EXPERT_FUSIONS[barycenter]"}
+        ],
+    )
+    def test_a_non_finite_or_negative_weight_is_rejected(self, fusion, bad, experts):
+        mean, log_var = experts
+        weights = torch.ones(mean.shape[0])
+        weights[1] = bad
+        with pytest.raises(ValueError, match="finite and nonnegative"):
+            fusion(mean, log_var, weights=weights)

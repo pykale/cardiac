@@ -227,6 +227,8 @@ def mixture_of_experts(
     Raises:
         ValueError: If the shapes are inconsistent, the mask is not binary, or a weight
             is negative or not finite.
+        TypeError: If an input is not a tensor, or ``mean`` and ``log_var`` differ in
+            floating dtype.
     """
     joint_mean, joint_log_var = _kale_mixture_of_experts(mean, log_var, mask=mask, weights=weights)
     return GaussianPosterior(joint_mean, joint_log_var)
@@ -248,6 +250,8 @@ def mean_of_experts(mean: Tensor, log_var: Tensor, mask: Tensor | None = None) -
 
     Raises:
         ValueError: If the shapes are inconsistent or the mask is not binary.
+        TypeError: If an input is not a tensor, or ``mean`` and ``log_var`` differ in
+            floating dtype.
     """
     joint_mean, joint_log_var = _kale_mean_of_experts(mean, log_var, mask=mask)
     return GaussianPosterior(joint_mean, joint_log_var)
@@ -280,6 +284,8 @@ def wasserstein_barycenter(
     Raises:
         ValueError: If the shapes are inconsistent, the mask is not binary, or a weight
             is negative or not finite.
+        TypeError: If an input is not a tensor, or ``mean`` and ``log_var`` differ in
+            floating dtype.
     """
     joint_mean, joint_log_var = _kale_wasserstein_barycenter(mean, log_var, mask=mask, weights=weights)
     return GaussianPosterior(joint_mean, joint_log_var)
@@ -315,6 +321,8 @@ def hierarchical_experts(
     Raises:
         ValueError: If the shapes are inconsistent, the mask is not binary, or
             ``num_groups`` is below one.
+        TypeError: If an input is not a tensor, or ``mean`` and ``log_var`` differ in
+            floating dtype.
     """
     joint_mean, joint_log_var = _kale_hierarchical_experts(mean, log_var, mask=mask, num_groups=num_groups)
     return GaussianPosterior(joint_mean, joint_log_var)
