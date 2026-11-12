@@ -129,6 +129,21 @@ class TestRegistry:
         assert torch.equal(fused.mean, core_mean)
         assert torch.equal(fused.log_var, core_log_var)
 
+    @pytest.mark.parametrize("method", ["moe", "barycenter"])
+    def test_only_the_ratio_of_the_weights_matters(self, method, experts):
+        # The former normalization floored the weight total at 1e-8, so tiny weights
+        # pulled the fused posterior towards zero.
+        mean, log_var = experts
+        unit = build_expert_fusion(method, weights=torch.ones(mean.shape[0]))(mean, log_var)
+        tiny = build_expert_fusion(method, weights=torch.full((mean.shape[0],), 1e-12))(mean, log_var)
+        torch.testing.assert_close(tiny.mean, unit.mean)
+        torch.testing.assert_close(tiny.log_var, unit.log_var)
+
+    def test_tiny_equal_weights_average_two_experts(self):
+        mean = torch.tensor([[[0.0]], [[10.0]]])
+        fused = build_expert_fusion("moe", weights=torch.tensor([1e-12, 1e-12]))(mean, torch.zeros_like(mean))
+        assert float(fused.mean) == pytest.approx(5.0)
+
     def test_hierarchical_group_option_is_forwarded_to_pykale(self, experts):
         mean, log_var = experts
         fused = build_expert_fusion("hime", num_groups=2)(mean, log_var)

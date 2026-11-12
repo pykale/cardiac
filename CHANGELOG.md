@@ -196,6 +196,12 @@ Notable changes to KaleCardiac. The format follows
 
 ### Fixed
 
+- Weighted `moe` and `barycenter` fusion did not normalize weights whose total for a
+  sample was below 1e-8: the shares summed to less than one, so the result shrank towards
+  zero and the barycenter reported near-zero variance. With equal weights of 1e-12, two
+  experts with means 0 and 10 fused to 0.001 rather than 5. PyKale's fusion depends only
+  on the ratio of the weights. No model or configuration passes fusion weights, so no
+  existing result changes. Other explicit weights differ by rounding only.
 - Pretraining wrote a full Lightning checkpoint — the model and its optimizer state,
   2.4 GB for the tutorial's CardioVAE — after every epoch, which nothing read: the
   weights are saved as `pretrained.pt`. A run with nothing to monitor now keeps no
