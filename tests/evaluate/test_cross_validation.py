@@ -123,3 +123,12 @@ class TestKaleCardiacImports:
         from kalecardiac.evaluate import MetricError as cardiac_error
 
         assert cardiac_error is MetricError and issubclass(cardiac_error, ValueError)
+
+
+@pytest.mark.parametrize("empty", [[], ()], ids=["list", "tuple"])
+def test_empty_class_names_use_the_default_labels(empty):
+    from kalecardiac.evaluate import multiclass_metrics
+
+    labels = np.array([0, 1, 2, 0, 1, 2])
+    scores = np.eye(3)[[0, 1, 2, 1, 1, 2]]
+    assert multiclass_metrics(labels, scores, empty) == multiclass_metrics(labels, scores)

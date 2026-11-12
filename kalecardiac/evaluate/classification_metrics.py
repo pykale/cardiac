@@ -129,7 +129,8 @@ def multiclass_metrics(labels: ArrayLike, scores: ArrayLike, class_names: Sequen
         labels: ``(N,)`` class indices.
         scores: ``(N, num_classes)`` probabilities, or logits, which are passed through a
             softmax first.
-        class_names: Names for the confusion matrix's axes. Defaults to the indices.
+        class_names: Names for the confusion matrix's axes. ``None`` or an empty sequence
+            uses the indices.
 
     Returns:
         Accuracy, balanced accuracy, macro F1, one-versus-rest macro ROC-AUC where it
@@ -139,6 +140,8 @@ def multiclass_metrics(labels: ArrayLike, scores: ArrayLike, class_names: Sequen
         MetricError: If the shapes disagree, a label is not a valid class index, the
             class names do not match the classes, or fewer than two classes are present.
     """
+    if class_names is not None and len(class_names) == 0:
+        class_names = None
     return _kale_multiclass_metrics(labels, scores, class_names)
 
 
