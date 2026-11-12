@@ -55,7 +55,8 @@ import pytorch_lightning as pl
 from torch.utils.data import DataLoader
 
 from examples.synthetic_data import make_synthetic_multimodal_data
-from kalecardiac.evaluate import binary_metrics, predict_split
+from kale.evaluate.classification_metrics import binary_metrics
+from kalecardiac.evaluate import predict_split
 from kalecardiac.loaddata import (
     ColumnTarget,
     ECGArraySource,
@@ -186,7 +187,7 @@ python -m examples.lsemvae_ecg.main ENDPOINT.REGRESSION True
 ## Interpreting a trained model
 
 ```python
-from kalecardiac.evaluate import roc_auc
+from kale.evaluate.classification_metrics import roc_auc
 from kalecardiac.interpret import attribution_ratios, modality_ablation, modality_attributions
 
 batch = next(iter(loader(ids["test"])))

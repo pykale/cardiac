@@ -5,8 +5,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 import torch
+from kale.evaluate.classification_metrics import MetricError, multiclass_roc_auc, roc_auc
 
-from kalecardiac.evaluate import MetricError, multiclass_roc_auc, roc_auc
 from kalecardiac.interpret import (
     attribution_ratio,
     attribution_ratios,

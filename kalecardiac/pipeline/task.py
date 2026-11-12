@@ -28,10 +28,10 @@ from collections.abc import Mapping, Sequence
 
 import numpy as np
 import torch
+from kale.evaluate.classification_metrics import MetricError, multiclass_roc_auc, roc_auc
 from sklearn.metrics import r2_score
 from torch import Tensor, nn
 
-from kalecardiac.evaluate.classification_metrics import MetricError, multiclass_roc_auc, roc_auc
 from kalecardiac.loaddata.multimodal_access import LABEL_KEY, VALUE_KEY, SubjectBatch
 from kalecardiac.model.predict.heads import LinearHead, MLPHead
 from kalecardiac.model.predict.losses import elbo_loss, latent_alignment_loss
@@ -124,7 +124,7 @@ class ClassificationTask(PredictionTask):
     Binary by default, which is what both cardiac use cases predict. With
     ``num_classes > 2`` the head widens, the loss becomes softmax cross-entropy, and the
     epoch metric becomes the macro one-versus-rest ROC-AUC
-    (:func:`~kalecardiac.evaluate.multiclass_roc_auc`); the trainer is unchanged.
+    (:func:`kale.evaluate.classification_metrics.multiclass_roc_auc`); the trainer is unchanged.
 
     Heads emit logits rather than probabilities, because the fused sigmoid-and-log form
     is the numerically stable one and ROC-AUC is unchanged by the sigmoid.

@@ -33,7 +33,8 @@ from kalecardiac.loaddata import ColumnTarget, ECGArraySource, CrossValidationSp
 from kalecardiac.prepdata import get_ecg_transform
 from kalecardiac.model.embed import LSEMVAE, MultimodalPredictor
 from kalecardiac.pipeline import CardiacTrainer, ClassificationTask, ReconstructionTask
-from kalecardiac.evaluate import binary_metrics, predict_split
+from kale.evaluate.classification_metrics import binary_metrics
+from kalecardiac.evaluate import predict_split
 from kalecardiac.interpret import attribution_ratios, modality_attributions
 
 # load ------------------------------------------------------------------ #
@@ -293,27 +294,32 @@ new trainer.
 
 ## `evaluate` — scoring, by task
 
+General metric calculations come from PyKale. Import them directly from the indicated `kale.evaluate` module; KaleCardiac supplies the prediction records and adapters listed below.
+
+| Import from PyKale | Functions |
+| --- | --- |
+| `kale.evaluate.classification_metrics` | `roc_auc`, `sensitivity_specificity`, `binary_metrics`, `multiclass_roc_auc`, `multiclass_metrics`, `mean_roc_curve`, `MetricError` |
+| `kale.evaluate.regression_metrics` | `regression_metrics` |
+| `kale.evaluate.cross_validation` | `summarize_folds` |
+
+KaleCardiac keeps these APIs because they work with its prediction records or retain a different call signature:
+
 | Name | Returns |
 | --- | --- |
-| `roc_auc(labels, scores)` | The area |
-| `sensitivity_specificity(labels, scores, threshold)` | The clinical pair |
-| `binary_metrics(labels, scores, threshold)` | Counts, ranking metrics, threshold metrics and the confusion matrix, JSON-ready |
-| `multiclass_roc_auc(labels, scores)` | Macro one-versus-rest area: every class weighs the same, however rare |
-| `multiclass_metrics(labels, scores, class_names)` | Accuracy, balanced accuracy, macro F1, the macro area and the confusion matrix |
-| `mean_roc_curve(labels_per_run, scores_per_run)` | Curves interpolated onto a shared grid, with a variability band |
-| `regression_metrics(targets, predictions, unit)` | scikit-learn's RMSE, MAE and R², plus the signed bias, in the endpoint's units |
 | `predict_split(model, loader, split, fold)` | A `SplitPredictions`, traceable by `subject_id` |
 | `save_predictions(out_dir, predictions, metrics)` | A CSV and a JSON |
-| `summarize_folds(fold_metrics)` | Mean and spread **over folds** |
+| `flatten_fold_summary(summary)` | One results-table row from PyKale's fold summary |
 | `pool_folds(fold_predictions)` | Every fold's labels and scores, for a **pooled** metric |
 | `bootstrap_ci(labels, scores, metric, ...)` | A percentile interval, resampling *subjects* |
+
+For example, replace `from kalecardiac.evaluate import binary_metrics` with `from kale.evaluate.classification_metrics import binary_metrics`. Binary labels must be exactly 0 or 1, and multiclass labels must be valid class indices. A two-column multiclass score uses binary ROC-AUC. Bootstrap resamples with NaN or infinite metrics are skipped; a non-finite metric on the full split raises `MetricError`.
 
 `MetricError` is raised where a metric cannot be computed — a one-class split, say —
 which a trainer treats as "skip this epoch's metric" rather than a failure.
 
-Scores may be logits or probabilities throughout. A multiclass metric applies the
-softmax itself where the scores are not already a distribution, because unlike a
-binary ranking, a one-versus-rest ranking is changed by it.
+Scores may be logits or probabilities throughout. PyKale infers the score type from its values by default: binary scores in `[0, 1]` and multiclass rows that form distributions are read as probabilities. If logits happen to look like probabilities, pass `score_type="logit"` to the PyKale function. Multiclass logits pass through a softmax because one-versus-rest ranking can change after that conversion.
+
+`pool_folds` pairs each fold's targets with its scores and rejects a fold with unequal lengths. Pool predictions from different fitted models only when their scores share a comparable scale, such as calibrated probabilities; otherwise summarize the metric calculated separately for each fold.
 
 ---
 

@@ -96,6 +96,28 @@ Notable changes to KaleCardiac. The format follows
 
 ### Changed
 
+- **Shared evaluation functions now come directly from PyKale.** Import classification
+  metrics and `MetricError` from `kale.evaluate.classification_metrics`, regression
+  metrics from `kale.evaluate.regression_metrics`, and `summarize_folds` from
+  `kale.evaluate.cross_validation`. The duplicate KaleCardiac classification and
+  regression modules, their one-line wrappers and the `summarize_folds` wrapper are
+  removed. Existing imports from `kalecardiac.evaluate` must use those PyKale paths.
+  `kalecardiac.evaluate` still provides prediction records, `flatten_fold_summary`,
+  and adapters for `bootstrap_ci` and `pool_folds`. The former keeps its labels-first
+  argument order, seed of 2026 and skipping of `ValueError` resamples; the latter
+  accepts `SplitPredictions`. Results on valid inputs are unchanged to the bit. The
+  PyKale functions change behavior for inputs on which these metrics were undefined:
+  - a two-column multiclass score is scored as the binary area instead of failing in
+    scikit-learn;
+  - a binary label other than exactly 0 or 1, or a multiclass label that is not exactly
+    a class index (`0.999999`, `0.5`, NaN), raises `MetricError` rather than being cast;
+  - `bootstrap_ci` skips a resample whose metric is NaN or infinite, and raises
+    `MetricError` when the metric is not finite on every subject, rather than returning
+    a NaN interval; a one-class split now fails on the split itself, before any resample;
+  - `pool_folds` raises when a fold's targets and scores differ in length;
+  - some error messages are PyKale's wording ("sample" for "subject", "labels must be
+    class indices 0 to K-1").
+
 - **The examples run through `kalecardiac.auto`.** A runner keeps what it compares, the
   model it builds and its own reports; LS-EMVAE's robustness curve runs as the `report`
   `cross_validate` calls after each fold. Both preprocess with

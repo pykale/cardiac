@@ -37,10 +37,10 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 
 import numpy as np
 import torch
+from kale.evaluate.classification_metrics import MetricError
 from numpy.typing import ArrayLike
 from torch import Tensor, nn
 
-from kalecardiac.evaluate.classification_metrics import MetricError
 from kalecardiac.evaluate.predictions import predict_split
 from kalecardiac.loaddata.multimodal_access import SubjectBatch
 
@@ -389,8 +389,8 @@ def modality_ablation(
         metric: Takes ``(targets, scores)`` and returns a float. ``scores`` is what the
             model predicts, shaped as :func:`~kalecardiac.evaluate.predict_split` shapes
             it: ``(N,)`` for a one-output model, so
-            :func:`~kalecardiac.evaluate.roc_auc` fits, and ``(N, K)`` logits for a
-            multiclass one, so :func:`~kalecardiac.evaluate.multiclass_roc_auc` does.
+            :func:`kale.evaluate.classification_metrics.roc_auc` fits, and ``(N, K)`` logits for a
+            multiclass one, so :func:`kale.evaluate.classification_metrics.multiclass_roc_auc` does.
         target_key: Which batch target the metric scores against.
         modalities: Which to ablate. ``None`` ablates every modality the *model* reads
             where it declares them, and otherwise every modality the batch carries.

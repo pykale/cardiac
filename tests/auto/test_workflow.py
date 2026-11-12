@@ -18,6 +18,7 @@ import pandas as pd
 import pytest
 import pytorch_lightning as pl
 import torch
+from kale.evaluate.classification_metrics import MetricError
 
 from kalecardiac.auto import (
     check_model_name,
@@ -32,7 +33,6 @@ from kalecardiac.auto import (
 )
 from kalecardiac.auto.workflow import _lightning_trainer
 from kalecardiac.config import get_cfg_defaults
-from kalecardiac.evaluate import MetricError
 from kalecardiac.loaddata import MultimodalDataset
 from kalecardiac.model.embed import LSEMVAE
 from kalecardiac.pipeline import CardiacTrainer

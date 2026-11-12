@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 import pytest
 import torch
+from kale.evaluate.classification_metrics import multiclass_roc_auc, roc_auc
 from sklearn.metrics import r2_score
 from sklearn.utils.class_weight import compute_class_weight
 
@@ -31,7 +32,7 @@ from kalecardiac.auto import (
     score_predictions,
 )
 from kalecardiac.config import get_cfg_defaults
-from kalecardiac.evaluate import SplitPredictions, multiclass_roc_auc, roc_auc
+from kalecardiac.evaluate import SplitPredictions
 from kalecardiac.pipeline import ClassificationTask, RegressionTask
 
 #: The column a test cohort records its measurement in, and its class when one is asked for.

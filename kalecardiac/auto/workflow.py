@@ -25,13 +25,15 @@ from typing import Any
 import pandas as pd
 import pytorch_lightning as pl
 import torch
+from kale.evaluate.classification_metrics import MetricError
+from kale.evaluate.cross_validation import summarize_folds
 from torch.utils.data import DataLoader
 from torchvision.transforms import Compose
 from yacs.config import CfgNode
 
 from kalecardiac.auto.endpoint import format_headline, get_ablation_metric, get_prediction_task, score_predictions
 from kalecardiac.config import parse_weights
-from kalecardiac.evaluate import MetricError, SplitPredictions, predict_split, save_predictions, summarize_folds
+from kalecardiac.evaluate import SplitPredictions, predict_split, save_predictions
 from kalecardiac.interpret import attribution_ratios, modality_ablation, modality_attributions
 from kalecardiac.loaddata import (
     BaseSplitter,
@@ -390,7 +392,7 @@ def cross_validate(
             released, for a report that rescores the test split.
 
     Returns:
-        The folds' metrics, summarized by :func:`~kalecardiac.evaluate.summarize_folds`.
+        The folds' metrics, summarized by :func:`kale.evaluate.cross_validation.summarize_folds`.
     """
     out_dir = ensure_dir(out_dir)
     name = "+".join(sources)

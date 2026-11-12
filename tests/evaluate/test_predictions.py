@@ -8,7 +8,7 @@ import json
 import numpy as np
 import pytest
 
-from kalecardiac.evaluate import SplitPredictions, binary_metrics, predict_split, save_predictions
+from kalecardiac.evaluate import SplitPredictions, predict_split, save_predictions
 from kalecardiac.model.embed import LSEMVAE, MultimodalPredictor
 from kalecardiac.pipeline import CardiacTrainer, ClassificationTask
 
@@ -99,7 +99,7 @@ class TestSavePredictions:
     def test_writes_a_csv_and_a_metrics_file(self, trained, tmp_path):
         model, loader = trained
         predictions = predict_split(model, loader, split="test")
-        metrics = {"test": binary_metrics(predictions.targets["label"], predictions.scores)}
+        metrics = {"test": {"n": len(predictions)}}
         csv_path, json_path = save_predictions(tmp_path / "out", [predictions], metrics)
 
         assert csv_path.exists() and json_path.exists()
