@@ -2,14 +2,17 @@
 
 Every multimodal VAE in this package is the same model with a different answer to one
 question: *given one diagonal Gaussian per modality, what is the joint posterior?*
-This module keeps the Cardiac-facing functions and posterior type; reusable Gaussian
-calculations live in PyKale core.
+Each function below returns a :class:`GaussianPosterior`.
 
 .. code-block:: text
 
-    product_of_experts     Cardiac masked product returning GaussianPosterior
-    build_expert_fusion    named model fusion returning GaussianPosterior
-    PyKale core            mixture, mean, barycenter, grouping and HiME calculations
+    product_of_experts      precision-weighted product, KaleCardiac's own
+    mixture_of_experts      weighted parameter average
+    mean_of_experts         the equal-weight average
+    wasserstein_barycenter  mean of means and of standard deviations
+    hierarchical_experts    product within groups, average across them (HiME)
+    get_expert_groups       contiguous grouping that uses every expert
+    build_expert_fusion     a fusion by configuration name
 
 Naming the mechanisms rather than the papers is what makes them comparable: a
 product-of-experts VAE, a mixture-of-experts VAE and a hierarchical one differ by the
@@ -22,9 +25,9 @@ present for that sample. A masked-out expert contributes nothing -- negligible
 precision to a product, zero share to an average -- which is how a model trained on
 twelve leads runs on six without being retrained.
 
-Import reusable Gaussian functions directly from :mod:`kale.embed.multimodal_fusion`.
-The Cardiac fusion registry converts their tensor-pair results to
-:class:`GaussianPosterior` for its models.
+The averaging, barycenter, grouping and hierarchical calculations are PyKale's
+(:mod:`kale.embed.multimodal_fusion`). The functions here keep KaleCardiac's names and
+return a :class:`GaussianPosterior`; PyKale's own return a ``(mean, log_var)`` pair.
 """
 
 from __future__ import annotations
@@ -34,6 +37,7 @@ from dataclasses import dataclass
 
 import torch
 from kale.embed.multimodal_fusion import ProductOfExperts
+from kale.embed.multimodal_fusion import expert_groups as _kale_expert_groups
 from kale.embed.multimodal_fusion import hierarchical_experts as _kale_hierarchical_experts
 from kale.embed.multimodal_fusion import mean_of_experts as _kale_mean_of_experts
 from kale.embed.multimodal_fusion import mixture_of_experts as _kale_mixture_of_experts
@@ -199,25 +203,86 @@ def product_of_experts(mean: Tensor, log_var: Tensor, mask: Tensor | None = None
     return GaussianPosterior(joint_mean, joint_log_var)
 
 
-def _posterior_adapter(fusion: Callable[..., tuple[Tensor, Tensor]]) -> Callable[..., GaussianPosterior]:
-    """Adapt a PyKale tensor pair to the posterior returned by Cardiac models."""
+def mixture_of_experts(
+    mean: Tensor,
+    log_var: Tensor,
+    mask: Tensor | None = None,
+    weights: Tensor | None = None,
+) -> GaussianPosterior:
+    """Fuse experts as a weighted average of their parameters.
 
-    def fuse(mean: Tensor, log_var: Tensor, mask: Tensor | None = None, *args, **kwargs) -> GaussianPosterior:
-        # Options such as weights or num_groups may be passed positionally, as before the migration.
-        joint_mean, joint_log_var = fusion(mean, log_var, mask, *args, **kwargs)
-        return GaussianPosterior(joint_mean, joint_log_var)
+    Computed by :func:`kale.embed.multimodal_fusion.mixture_of_experts`, which documents
+    the arguments and checks.
 
-    return fuse
+    Returns:
+        The ``(B, D)`` joint posterior.
+    """
+    joint_mean, joint_log_var = _kale_mixture_of_experts(mean, log_var, mask=mask, weights=weights)
+    return GaussianPosterior(joint_mean, joint_log_var)
+
+
+def mean_of_experts(mean: Tensor, log_var: Tensor, mask: Tensor | None = None) -> GaussianPosterior:
+    """Fuse experts as an unweighted mean of their parameters.
+
+    Computed by :func:`kale.embed.multimodal_fusion.mean_of_experts`.
+
+    Returns:
+        The ``(B, D)`` joint posterior.
+    """
+    joint_mean, joint_log_var = _kale_mean_of_experts(mean, log_var, mask=mask)
+    return GaussianPosterior(joint_mean, joint_log_var)
+
+
+def wasserstein_barycenter(
+    mean: Tensor,
+    log_var: Tensor,
+    mask: Tensor | None = None,
+    weights: Tensor | None = None,
+) -> GaussianPosterior:
+    """Fuse experts as their 2-Wasserstein barycenter.
+
+    Computed by :func:`kale.embed.multimodal_fusion.wasserstein_barycenter`.
+
+    Returns:
+        The ``(B, D)`` joint posterior.
+    """
+    joint_mean, joint_log_var = _kale_wasserstein_barycenter(mean, log_var, mask=mask, weights=weights)
+    return GaussianPosterior(joint_mean, joint_log_var)
+
+
+def hierarchical_experts(
+    mean: Tensor,
+    log_var: Tensor,
+    mask: Tensor | None = None,
+    num_groups: int = 4,
+) -> GaussianPosterior:
+    """Fuse experts hierarchically: a product within groups, an average across them.
+
+    Computed by :func:`kale.embed.multimodal_fusion.hierarchical_experts`.
+
+    Returns:
+        The ``(B, D)`` joint posterior.
+    """
+    joint_mean, joint_log_var = _kale_hierarchical_experts(mean, log_var, mask=mask, num_groups=num_groups)
+    return GaussianPosterior(joint_mean, joint_log_var)
+
+
+def get_expert_groups(num_experts: int, num_groups: int) -> list[list[int]]:
+    """Divide ``num_experts`` expert indices into ``num_groups`` contiguous groups.
+
+    Computed by :func:`kale.embed.multimodal_fusion.expert_groups`.
+    """
+    return _kale_expert_groups(num_experts, num_groups)
 
 
 #: Cardiac model configuration names. PyKale owns the Gaussian calculations;
 #: these callables retain the GaussianPosterior result expected by Cardiac models.
 EXPERT_FUSIONS: dict[str, Callable[..., GaussianPosterior]] = {
     "poe": product_of_experts,
-    "moe": _posterior_adapter(_kale_mixture_of_experts),
-    "hime": _posterior_adapter(_kale_hierarchical_experts),
-    "mean": _posterior_adapter(_kale_mean_of_experts),
-    "barycenter": _posterior_adapter(_kale_wasserstein_barycenter),
+    "moe": mixture_of_experts,
+    "hime": hierarchical_experts,
+    "mean": mean_of_experts,
+    "barycenter": wasserstein_barycenter,
 }
 
 

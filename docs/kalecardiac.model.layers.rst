@@ -21,7 +21,7 @@ kalecardiac.model.layers.conv2d
 kalecardiac.model.layers.gaussian
 ---------------------------------
 
-Import shared Gaussian averaging, barycenter, grouping and hierarchical functions directly from ``kale.embed.multimodal_fusion``. KaleCardiac retains ``GaussianPosterior``, its masked ``product_of_experts`` and the named fusion adapter used by its models. See the `API overview <https://github.com/pykale/cardiac/blob/main/API_overview.md#gaussian-experts--pykale-calculations-cardiac-model-adapter>`_ for the import and return-value changes.
+The Gaussian averaging, barycenter, grouping and hierarchical functions are computed by ``kale.embed.multimodal_fusion``. KaleCardiac keeps their names and returns a ``GaussianPosterior``; PyKale's own functions return a ``(mean, log_var)`` tensor pair.
 
 .. automodule:: kalecardiac.model.layers.gaussian
    :members:

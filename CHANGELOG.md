@@ -96,17 +96,13 @@ Notable changes to KaleCardiac. The format follows
 
 ### Changed
 
-- **Shared evaluation functions now come directly from PyKale.** Import classification
-  metrics and `MetricError` from `kale.evaluate.classification_metrics`, regression
-  metrics from `kale.evaluate.regression_metrics`, and `summarize_folds` from
-  `kale.evaluate.cross_validation`. The duplicate KaleCardiac classification and
-  regression modules, their one-line wrappers and the `summarize_folds` wrapper are
-  removed. Existing imports from `kalecardiac.evaluate` must use those PyKale paths.
-  `kalecardiac.evaluate` still provides prediction records, `flatten_fold_summary`,
-  and adapters for `bootstrap_ci` and `pool_folds`. The former keeps its labels-first
-  argument order, seed of 2026 and skipping of `ValueError` resamples; the latter
-  accepts `SplitPredictions`. Results on valid inputs are unchanged to the bit. The
-  PyKale functions change behavior for inputs on which these metrics were undefined:
+- **Evaluation is computed by PyKale.** `kalecardiac.evaluate` keeps its classification
+  and regression metrics, `MetricError` and `summarize_folds`, with the same names and
+  signatures; each calls `kale.evaluate`, and `MetricError` is PyKale's, still a
+  `ValueError`. `bootstrap_ci` and `pool_folds` adapt PyKale's: the former keeps its
+  labels-first argument order, seed of 2026 and skipping of `ValueError` resamples; the
+  latter accepts `SplitPredictions`. Results on valid inputs are unchanged to the bit.
+  The PyKale functions change behavior for inputs on which these metrics were undefined:
   - a two-column multiclass score is scored as the binary area instead of failing in
     scikit-learn;
   - a binary label other than exactly 0 or 1, or a multiclass label that is not exactly
@@ -147,7 +143,7 @@ Notable changes to KaleCardiac. The format follows
   | `scale_image`, `standardise_image` | `scale_image_intensity`, `normalize_image` |
   | `canonical_lead(s)`, `lead_indices`, `lead_sources` | `normalize_lead_name(s)`, `get_lead_indices`, `get_lead_sources` |
   | `HoldOut`, `CrossValidation`, `Predefined`, `CohortSplitter` | `HoldOutSplit`, `CrossValidationSplit`, `PredefinedSplit`, `BaseSplitter` |
-  | `composite_labels`, `reparameterise` | `get_stratification_labels`, `reparameterize` |
+  | `composite_labels`, `expert_groups`, `reparameterise` | `get_stratification_labels`, `get_expert_groups`, `reparameterize` |
   | `summarise_folds`, `normalise_attribution` | `summarize_folds`, `normalize_attribution` |
   | `ecg_wave_segments`, `latent_embedding` | `delineate_ecg_waves`, `project_latents` |
   | `ECG.STANDARDISE` | `ECG.NORMALIZE` |
@@ -158,17 +154,14 @@ Notable changes to KaleCardiac. The format follows
   naming its replacement, or the dependency's function that replaced it, and
   `ECG.STANDARDISE` is a renamed key to YACS.
 
-- Shared Gaussian averaging, barycenter, grouping and hierarchical functions now come
-  directly from `kale.embed.multimodal_fusion`; the duplicate KaleCardiac public
-  functions (`mixture_of_experts`, `mean_of_experts`, `hierarchical_experts`,
-  `wasserstein_barycenter`, `expert_groups`) are removed, and importing one names the
-  PyKale function that replaced it. This changes those import paths and their direct
-  return value from `GaussianPosterior` to a `(mean, log_var)` tensor pair. Cardiac's
-  `build_expert_fusion` and `EXPERT_FUSIONS` retain their names, options and
-  `GaussianPosterior` result for models. PyKale rejects non-binary masks, non-tensor
-  masks, mismatched or non-floating dtypes and non-finite weights on these shared
-  methods. Cardiac's `product_of_experts` remains because its masked-product API
-  differs.
+- Gaussian averaging, barycenter, grouping and hierarchical fusion are computed by
+  `kale.embed.multimodal_fusion`. `mixture_of_experts`, `mean_of_experts`,
+  `hierarchical_experts`, `wasserstein_barycenter` and `get_expert_groups` keep their
+  names, signatures and `GaussianPosterior` result, as do `build_expert_fusion` and
+  `EXPERT_FUSIONS`; PyKale's own functions return a `(mean, log_var)` tensor pair.
+  PyKale rejects non-binary masks, non-tensor masks, mismatched or non-floating dtypes
+  and non-finite weights on these methods. Cardiac's `product_of_experts` remains its
+  own because its masked-product API differs.
 - **What a dependency already provides is no longer duplicated.** Transforms are chained
   with `torchvision.transforms.Compose`, replacing `SignalPipeline`, `ImagePipeline` and
   `step_name`. Tasks call PyTorch's losses directly, replacing `binary_cross_entropy`,

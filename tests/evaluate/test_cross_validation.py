@@ -70,3 +70,56 @@ class TestPoolFolds:
         fold = SplitPredictions("test", ["a", "b"], np.array([0.5]), {"label": np.array([0, 1])}, fold=0)
         with pytest.raises(MetricError, match="2 labels but 1 scores"):
             pool_folds([fold])
+
+
+class TestKaleCardiacImports:
+    """The metric names KaleCardiac kept return PyKale's values."""
+
+    LABELS = np.array([0, 1, 0, 1, 1, 0])
+    SCORES = np.array([0.1, 0.8, 0.5, 0.4, 0.9, 0.3])
+
+    @pytest.mark.parametrize(
+        "name,module",
+        [
+            ("roc_auc", "classification_metrics"),
+            ("binary_metrics", "classification_metrics"),
+            ("sensitivity_specificity", "classification_metrics"),
+            ("regression_metrics", "regression_metrics"),
+        ],
+    )
+    def test_binary_and_regression_metrics_match_pykale(self, name, module):
+        import importlib
+
+        import kalecardiac.evaluate as cardiac
+
+        core = importlib.import_module(f"kale.evaluate.{module}")
+        assert getattr(cardiac, name)(self.LABELS, self.SCORES) == getattr(core, name)(self.LABELS, self.SCORES)
+
+    def test_multiclass_metrics_match_pykale(self):
+        import kale.evaluate.classification_metrics as core
+
+        import kalecardiac.evaluate as cardiac
+
+        labels = np.array([0, 1, 2, 0, 1, 2])
+        logits = np.array(
+            [[2.0, 0.1, 0.3], [0.2, 1.5, 0.1], [0.1, 0.4, 2.2], [1.1, 0.9, 0.2], [0.3, 0.2, 0.1], [0.5, 0.1, 1.9]]
+        )
+        assert cardiac.multiclass_roc_auc(labels, logits) == core.multiclass_roc_auc(labels, logits)
+        assert str(cardiac.multiclass_metrics(labels, logits, ["a", "b", "c"])) == str(
+            core.multiclass_metrics(labels, logits, ["a", "b", "c"])
+        )
+
+    def test_mean_roc_curve_and_fold_summary_match_pykale(self):
+        import kale.evaluate.classification_metrics as core
+
+        import kalecardiac.evaluate as cardiac
+
+        runs = ([self.LABELS, self.LABELS[::-1]], [self.SCORES, self.SCORES])
+        assert str(cardiac.mean_roc_curve(*runs, grid_size=20)) == str(core.mean_roc_curve(*runs, grid_size=20))
+        folds = [{"auc": 0.7}, {"auc": 0.9}]
+        assert cardiac.summarize_folds(folds) == summarize_folds(folds)
+
+    def test_metric_error_is_pykale_and_still_a_value_error(self):
+        from kalecardiac.evaluate import MetricError as cardiac_error
+
+        assert cardiac_error is MetricError and issubclass(cardiac_error, ValueError)

@@ -15,7 +15,7 @@ They are independent: either changes without the other.
 
 Each modality's encoder proposes a diagonal Gaussian over a shared latent space. The question every multimodal VAE answers differently is: **given one Gaussian per modality, what is the joint posterior?**
 
-All five answers take the same shapes — `mean` and `log_var` of `(M, B, D)` for `M` experts, and an optional `(M, B)` mask — so Cardiac models swap between them with a configuration string. Call the shared methods directly from `kale.embed.multimodal_fusion` for a `(mean, log_var)` tensor pair; `build_expert_fusion` returns a `GaussianPosterior` for Cardiac models.
+All five answers take the same shapes — `mean` and `log_var` of `(M, B, D)` for `M` experts, and an optional `(M, B)` mask — so Cardiac models swap between them with a configuration string. The functions in `kalecardiac.model.layers` and `build_expert_fusion` return a `GaussianPosterior`; the same calculations in `kale.embed.multimodal_fusion` return a `(mean, log_var)` tensor pair.
 
 ### Product of experts (`poe`)
 

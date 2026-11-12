@@ -4,7 +4,14 @@ Evaluate: ``kalecardiac.evaluate``
 .. automodule:: kalecardiac.evaluate
    :no-members:
 
-Import general classification and regression metrics directly from ``kale.evaluate.classification_metrics`` and ``kale.evaluate.regression_metrics``. PyKale also provides ``summarize_folds`` in ``kale.evaluate.cross_validation``. KaleCardiac retains the functions below for its prediction records, report format and labels-first ``bootstrap_ci`` signature. See the `API overview <https://github.com/pykale/cardiac/blob/main/API_overview.md#evaluate--scoring-by-task>`_ for the import mapping and behavior changes.
+The classification and regression metrics and ``summarize_folds`` are computed by ``kale.evaluate``; KaleCardiac keeps their names and signatures.
+
+kalecardiac.evaluate.classification\_metrics
+--------------------------------------------
+
+.. automodule:: kalecardiac.evaluate.classification_metrics
+   :members:
+   :show-inheritance:
 
 kalecardiac.evaluate.cross\_validation
 --------------------------------------
@@ -17,5 +24,12 @@ kalecardiac.evaluate.predictions
 --------------------------------
 
 .. automodule:: kalecardiac.evaluate.predictions
+   :members:
+   :show-inheritance:
+
+kalecardiac.evaluate.regression\_metrics
+----------------------------------------
+
+.. automodule:: kalecardiac.evaluate.regression_metrics
    :members:
    :show-inheritance:

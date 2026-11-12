@@ -33,8 +33,7 @@ from kalecardiac.loaddata import ColumnTarget, ECGArraySource, CrossValidationSp
 from kalecardiac.prepdata import get_ecg_transform
 from kalecardiac.model.embed import LSEMVAE, MultimodalPredictor
 from kalecardiac.pipeline import CardiacTrainer, ClassificationTask, ReconstructionTask
-from kale.evaluate.classification_metrics import binary_metrics
-from kalecardiac.evaluate import predict_split
+from kalecardiac.evaluate import binary_metrics, predict_split
 from kalecardiac.interpret import attribution_ratios, modality_attributions
 
 # load ------------------------------------------------------------------ #
@@ -179,20 +178,26 @@ Steps are chained with `torchvision.transforms.Compose`; a source's `transform` 
 
 ## `model.layers` — blocks that know no modality
 
-### Gaussian experts — PyKale calculations, Cardiac model adapter
+### Gaussian experts — the mathematical core
 
-Import `mixture_of_experts`, `mean_of_experts`, `hierarchical_experts`, `wasserstein_barycenter` and `expert_groups` directly from `kale.embed.multimodal_fusion`. PyKale fusion functions take `(M, B, D)` mean and log-variance tensors, accept an optional `(M, B)` mask, and return a `(mean, log_var)` tensor pair. KaleCardiac keeps its `GaussianPosterior` for encoders and models; `build_expert_fusion` converts PyKale results to that type.
+All take `mean` and `log_var` of `(M, B, D)` and an optional `(M, B)` mask, and return a
+`GaussianPosterior`. The averaging, barycenter, grouping and hierarchical calculations are
+PyKale's (`kale.embed.multimodal_fusion`), whose own functions return a `(mean, log_var)`
+tensor pair instead.
 
 | Name | Combines by |
 | --- | --- |
 | `product_of_experts` | Precision-weighted product. Never less certain than any expert |
-| `EXPERT_FUSIONS`, `build_expert_fusion(name, **kw)` | Cardiac configuration names and a callable returning `GaussianPosterior` |
+| `mixture_of_experts` | Weighted parameter average. No expert dominates |
+| `mean_of_experts` | The equal-weight case |
+| `hierarchical_experts(..., num_groups)` | Product within groups, average across them (HiME) |
+| `wasserstein_barycenter` | Mean of means and of **standard deviations** |
+| `EXPERT_FUSIONS`, `build_expert_fusion(name, **kw)` | The registry, and construction by name |
+| `get_expert_groups(num_experts, num_groups)` | Contiguous grouping that uses **every** expert |
 | `prior_expert(shape)` | The standard-normal expert |
 | `reparameterize(mean, log_var)` | The differentiable sample. Always samples |
 | `GaussianPosterior` | `.mean`, `.log_var`, `.variance`, `.stddev`, `.sample()` |
 | `GaussianHead(in_features, latent_dim)` | Features to a posterior |
-
-For direct calculations, replace `from kalecardiac.model.layers import mixture_of_experts` with `from kale.embed.multimodal_fusion import mixture_of_experts`. The same import change applies to the other four shared functions. Code using Cardiac's model configuration names and `GaussianPosterior` continues to use `build_expert_fusion`.
 
 ### Backbones and decoders
 
@@ -294,25 +299,26 @@ new trainer.
 
 ## `evaluate` — scoring, by task
 
-General metric calculations come from PyKale. Import them directly from the indicated `kale.evaluate` module; KaleCardiac supplies the prediction records and adapters listed below.
-
-| Import from PyKale | Functions |
-| --- | --- |
-| `kale.evaluate.classification_metrics` | `roc_auc`, `sensitivity_specificity`, `binary_metrics`, `multiclass_roc_auc`, `multiclass_metrics`, `mean_roc_curve`, `MetricError` |
-| `kale.evaluate.regression_metrics` | `regression_metrics` |
-| `kale.evaluate.cross_validation` | `summarize_folds` |
-
-KaleCardiac keeps these APIs because they work with its prediction records or retain a different call signature:
+The classification and regression metrics and `summarize_folds` are computed by PyKale
+(`kale.evaluate`); KaleCardiac keeps their names and signatures.
 
 | Name | Returns |
 | --- | --- |
+| `roc_auc(labels, scores)` | The area |
+| `sensitivity_specificity(labels, scores, threshold)` | The clinical pair |
+| `binary_metrics(labels, scores, threshold)` | Counts, ranking metrics, threshold metrics and the confusion matrix, JSON-ready |
+| `multiclass_roc_auc(labels, scores)` | Macro one-versus-rest area: every class weighs the same, however rare |
+| `multiclass_metrics(labels, scores, class_names)` | Accuracy, balanced accuracy, macro F1, the macro area and the confusion matrix |
+| `mean_roc_curve(labels_per_run, scores_per_run)` | Curves interpolated onto a shared grid, with a variability band |
+| `regression_metrics(targets, predictions, unit)` | RMSE, MAE and R², plus the signed bias, in the endpoint's units |
 | `predict_split(model, loader, split, fold)` | A `SplitPredictions`, traceable by `subject_id` |
 | `save_predictions(out_dir, predictions, metrics)` | A CSV and a JSON |
-| `flatten_fold_summary(summary)` | One results-table row from PyKale's fold summary |
+| `summarize_folds(fold_metrics)` | Mean and spread **over folds** |
+| `flatten_fold_summary(summary)` | One results-table row from a fold summary |
 | `pool_folds(fold_predictions)` | Every fold's labels and scores, for a **pooled** metric |
 | `bootstrap_ci(labels, scores, metric, ...)` | A percentile interval, resampling *subjects* |
 
-For example, replace `from kalecardiac.evaluate import binary_metrics` with `from kale.evaluate.classification_metrics import binary_metrics`. Binary labels must be exactly 0 or 1, and multiclass labels must be valid class indices. A two-column multiclass score uses binary ROC-AUC. Bootstrap resamples with NaN or infinite metrics are skipped; a non-finite metric on the full split raises `MetricError`.
+Binary labels must be exactly 0 or 1, and multiclass labels must be valid class indices. A two-column multiclass score uses binary ROC-AUC. Bootstrap resamples with NaN or infinite metrics are skipped; a non-finite metric on the full split raises `MetricError`.
 
 `MetricError` is raised where a metric cannot be computed — a one-class split, say —
 which a trainer treats as "skip this epoch's metric" rather than a failure.
