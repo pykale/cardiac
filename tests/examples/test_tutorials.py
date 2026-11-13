@@ -23,7 +23,7 @@ import yaml
 from kalecardiac.config import get_cfg_defaults
 from kalecardiac.loaddata import LIMB_LEADS, STANDARD_12_LEAD
 
-TUTORIAL = Path(__file__).resolve().parents[1] / "tutorials" / "mdas_tutorial"
+TUTORIAL = Path(__file__).resolve().parents[2] / "tutorials" / "mdas_tutorial"
 CONFIGS = TUTORIAL / "configs"
 CARDIOVAE = TUTORIAL / "tutorial-CardioVAE.ipynb"
 LSEMVAE = TUTORIAL / "tutorial-LSEMVAE.ipynb"

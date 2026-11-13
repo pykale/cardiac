@@ -27,6 +27,7 @@ from functools import partial
 from pathlib import Path
 
 import numpy as np
+from kale.evaluate.classification_metrics import MetricError
 from torch.utils.data import DataLoader
 
 from examples.lsemvae_ecg.data import LeadCohort, load_cohort, summarize_cohort
@@ -41,7 +42,7 @@ from kalecardiac.auto import (
     get_folds,
     pretrain,
 )
-from kalecardiac.evaluate import MetricError, flatten_fold_summary
+from kalecardiac.evaluate import flatten_fold_summary
 from kalecardiac.interpret import collect_latents, progressive_ablation, project_latents
 from kalecardiac.loaddata import MultimodalDataset, normalize_lead_name, normalize_lead_names, release_workers
 from kalecardiac.model.embed import LSEMVAE

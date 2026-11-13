@@ -23,7 +23,7 @@ knows that the modalities happen to be leads.
 **Hierarchical modality expert fusion (HiME).** A product within groups of leads, then a
 mixture across the groups. The product sharpens agreement between leads that see related
 territory; the mixture keeps one over-confident group from determining the latent alone.
-It is :func:`~kalecardiac.model.layers.hierarchical_experts`, and the ablations from the
+It uses :func:`kale.embed.multimodal_fusion.hierarchical_experts`, and the ablations from the
 paper are ``fusion="poe"`` and ``fusion="moe"`` rather than separate models.
 
 **A shared decoder.** Every lead is reconstructed by the *same* decoder from the shared
@@ -42,7 +42,7 @@ Two documented departures from the reference implementation
 ``group_size = num_experts // num_groups`` and then took ``num_groups`` slices of that
 width. With twelve leads plus the prior and four groups, that is four groups of three,
 covering experts 0 to 11 -- the thirteenth expert, the prior, was silently dropped.
-:func:`~kalecardiac.model.layers.get_expert_groups` distributes the remainder instead, so
+:func:`kale.embed.multimodal_fusion.expert_groups` distributes the remainder instead, so
 every expert is used. Pass ``use_prior=False`` to fuse the leads alone.
 
 **The KL term is taken against the posterior that was actually sampled from.** Its

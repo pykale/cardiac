@@ -31,10 +31,10 @@ import logging
 from collections.abc import Mapping
 
 import torch
+from kale.evaluate.classification_metrics import MetricError
 from kale.pipeline.base_nn_trainer import BaseNNTrainer
 from torch import Tensor, nn
 
-from kalecardiac.evaluate.classification_metrics import MetricError
 from kalecardiac.loaddata.multimodal_access import SubjectBatch
 from kalecardiac.pipeline.task import PredictionTask
 

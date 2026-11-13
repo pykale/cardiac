@@ -8,6 +8,8 @@ Notable changes to KaleCardiac. The format follows
 
 ### Added
 
+- A per-subject missing-expert parity test for Gaussian fusion. CI also runs for pull
+  requests targeting the `migration/pykale-core` integration branch.
 - **`kalecardiac.auto`: the workflow both examples share, read from a configuration.**
   `auto.endpoint` turns `ENDPOINT` into labels, a task and scores (`check_endpoint`,
   `derive_endpoint`, `get_endpoint_target`, `get_prediction_task`, `score_predictions`,
@@ -94,6 +96,24 @@ Notable changes to KaleCardiac. The format follows
 
 ### Changed
 
+- **Evaluation is computed by PyKale.** `kalecardiac.evaluate` keeps its classification
+  and regression metrics, `MetricError` and `summarize_folds`, with the same names and
+  signatures; each calls `kale.evaluate`, and `MetricError` is PyKale's, still a
+  `ValueError`. `bootstrap_ci` and `pool_folds` adapt PyKale's: the former keeps its
+  labels-first argument order, seed of 2026 and skipping of `ValueError` resamples; the
+  latter accepts `SplitPredictions`. Results on valid inputs are unchanged to the bit.
+  The PyKale functions change behavior for inputs on which these metrics were undefined:
+  - a two-column multiclass score is scored as the binary area instead of failing in
+    scikit-learn;
+  - a binary label other than exactly 0 or 1, or a multiclass label that is not exactly
+    a class index (`0.999999`, `0.5`, NaN), raises `MetricError` rather than being cast;
+  - `bootstrap_ci` skips a resample whose metric is NaN or infinite, and raises
+    `MetricError` when the metric is not finite on every subject, rather than returning
+    a NaN interval; a one-class split now fails on the split itself, before any resample;
+  - `pool_folds` raises when a fold's targets and scores differ in length;
+  - some error messages are PyKale's wording ("sample" for "subject", "labels must be
+    class indices 0 to K-1").
+
 - **The examples run through `kalecardiac.auto`.** A runner keeps what it compares, the
   model it builds and its own reports; LS-EMVAE's robustness curve runs as the `report`
   `cross_validate` calls after each fold. Both preprocess with
@@ -134,6 +154,14 @@ Notable changes to KaleCardiac. The format follows
   naming its replacement, or the dependency's function that replaced it, and
   `ECG.STANDARDISE` is a renamed key to YACS.
 
+- Gaussian averaging, barycenter, grouping and hierarchical fusion are computed by
+  `kale.embed.multimodal_fusion`. `mixture_of_experts`, `mean_of_experts`,
+  `hierarchical_experts`, `wasserstein_barycenter` and `get_expert_groups` keep their
+  names, signatures and `GaussianPosterior` result, as do `build_expert_fusion` and
+  `EXPERT_FUSIONS`; PyKale's own functions return a `(mean, log_var)` tensor pair.
+  PyKale rejects non-binary masks, non-tensor masks, mismatched or non-floating dtypes
+  and non-finite weights on these methods. Cardiac's `product_of_experts` remains its
+  own because its masked-product API differs.
 - **What a dependency already provides is no longer duplicated.** Transforms are chained
   with `torchvision.transforms.Compose`, replacing `SignalPipeline`, `ImagePipeline` and
   `step_name`. Tasks call PyTorch's losses directly, replacing `binary_cross_entropy`,
@@ -161,6 +189,12 @@ Notable changes to KaleCardiac. The format follows
 
 ### Fixed
 
+- Weighted `moe` and `barycenter` fusion did not normalize weights whose total for a
+  sample was below 1e-8: the shares summed to less than one, so the result shrank towards
+  zero and the barycenter reported near-zero variance. With equal weights of 1e-12, two
+  experts with means 0 and 10 fused to 0.001 rather than 5. PyKale's fusion depends only
+  on the ratio of the weights. No model or configuration passes fusion weights, so no
+  existing result changes. Other explicit weights differ by rounding only.
 - Pretraining wrote a full Lightning checkpoint — the model and its optimizer state,
   2.4 GB for the tutorial's CardioVAE — after every epoch, which nothing read: the
   weights are saved as `pretrained.pt`. A run with nothing to monitor now keeps no

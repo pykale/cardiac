@@ -188,7 +188,7 @@ All take `mean` and `log_var` of `(M, B, D)` and an optional `(M, B)` mask, and 
 | `product_of_experts` | Precision-weighted product. Never less certain than any expert |
 | `mixture_of_experts` | Weighted parameter average. No expert dominates |
 | `mean_of_experts` | The equal-weight case |
-| `hierarchical_experts(..., num_groups)` | Product within groups, mixture across them (HiME) |
+| `hierarchical_experts(..., num_groups)` | Product within groups, average across them (HiME) |
 | `wasserstein_barycenter` | Mean of means and of **standard deviations** |
 | `EXPERT_FUSIONS`, `build_expert_fusion(name, **kw)` | The registry, and construction by name |
 | `get_expert_groups(num_experts, num_groups)` | Contiguous grouping that uses **every** expert |
@@ -305,19 +305,22 @@ new trainer.
 | `multiclass_roc_auc(labels, scores)` | Macro one-versus-rest area: every class weighs the same, however rare |
 | `multiclass_metrics(labels, scores, class_names)` | Accuracy, balanced accuracy, macro F1, the macro area and the confusion matrix |
 | `mean_roc_curve(labels_per_run, scores_per_run)` | Curves interpolated onto a shared grid, with a variability band |
-| `regression_metrics(targets, predictions, unit)` | scikit-learn's RMSE, MAE and R², plus the signed bias, in the endpoint's units |
+| `regression_metrics(targets, predictions, unit)` | RMSE, MAE and R², plus the signed bias, in the endpoint's units |
 | `predict_split(model, loader, split, fold)` | A `SplitPredictions`, traceable by `subject_id` |
 | `save_predictions(out_dir, predictions, metrics)` | A CSV and a JSON |
 | `summarize_folds(fold_metrics)` | Mean and spread **over folds** |
+| `flatten_fold_summary(summary)` | One results-table row from a fold summary |
 | `pool_folds(fold_predictions)` | Every fold's labels and scores, for a **pooled** metric |
 | `bootstrap_ci(labels, scores, metric, ...)` | A percentile interval, resampling *subjects* |
+
+Binary labels must be exactly 0 or 1, and multiclass labels must be valid class indices. A two-column multiclass score uses binary ROC-AUC. Bootstrap resamples with NaN or infinite metrics are skipped; a non-finite metric on the full split raises `MetricError`.
 
 `MetricError` is raised where a metric cannot be computed — a one-class split, say —
 which a trainer treats as "skip this epoch's metric" rather than a failure.
 
-Scores may be logits or probabilities throughout. A multiclass metric applies the
-softmax itself where the scores are not already a distribution, because unlike a
-binary ranking, a one-versus-rest ranking is changed by it.
+Scores may be logits or probabilities throughout. Binary scores in `[0, 1]` and multiclass rows in `[0, 1]` that sum to one are read as probabilities, and anything else as logits. Multiclass logits pass through a softmax because one-versus-rest ranking can change after that conversion.
+
+`pool_folds` pairs each fold's targets with its scores and rejects a fold with unequal lengths. Pool predictions from different fitted models only when their scores share a comparable scale, such as calibrated probabilities; otherwise summarize the metric calculated separately for each fold.
 
 ---
 
