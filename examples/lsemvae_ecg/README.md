@@ -1,7 +1,6 @@
 # LS-EMVAE: lead-specific representation learning from multi-lead ECG
 
-Treating each ECG lead as its own modality, pretraining on plentiful unlabelled
-twelve-lead recordings, and fine-tuning on the six leads a low-cost recorder captures.
+Treating each ECG lead as its own modality, pretraining on plentiful unlabelled twelve-lead recordings, and fine-tuning on the six leads a low-cost recorder captures.
 
 ```text
 multi-lead ECG, unlabelled
@@ -15,25 +14,14 @@ fine-tuning                            (a lead subset, frozen encoders, a clinic
 cardiovascular prediction
 ```
 
-This reproduces the workflow of Suvon et al., *Multimodal Latent Fusion of ECG Leads
-for Early Assessment of Pulmonary Hypertension*
-([arXiv:2503.13470](https://arxiv.org/abs/2503.13470),
-[reference implementation](https://github.com/Shef-AIRE/LS-EMVAE)). Every model,
-objective, metric and training loop comes from `kalecardiac`; this directory holds only
-what is specific to the experiment.
+This reproduces the workflow of Suvon et al., *Multimodal Latent Fusion of ECG Leads for Early Assessment of Pulmonary Hypertension* ([arXiv:2503.13470](https://arxiv.org/abs/2503.13470), [reference implementation](https://github.com/Shef-AIRE/LS-EMVAE)). Every model, objective, metric and training loop comes from `kalecardiac`; this directory holds only what is specific to the experiment.
 
 ## Why lead-specific
 
-A twelve-lead ECG is usually modelled as one twelve-channel signal, which asserts that
-the leads are interchangeable channels of a single view. They are not: each lead
-projects the heart's electrical activity onto a different axis, so they are better
-treated as *different views of the same underlying state* — which is what a multimodal
-VAE is built for. Two things follow that the channel view cannot give:
+A twelve-lead ECG is usually modelled as one twelve-channel signal, which asserts that the leads are interchangeable channels of a single view. They are not: each lead projects the heart's electrical activity onto a different axis, so they are better treated as *different views of the same underlying state* — which is what a multimodal VAE is built for. Two things follow that the channel view cannot give:
 
-- **an encoder per lead that keeps working when the others are absent**, which is what
-  makes a model pretrained on twelve leads usable on six;
-- **a principled fusion**, where leads that see related territory reinforce one another
-  through a product, and no single group of leads determines the latent on its own.
+- **an encoder per lead that keeps working when the others are absent**, which is what makes a model pretrained on twelve leads usable on six;
+- **a principled fusion**, where leads that see related territory reinforce one another through a product, and no single group of leads determines the latent on its own.
 
 ## Run it
 
@@ -58,14 +46,11 @@ python -m examples.lsemvae_ecg.main MODEL.SHARED_DECODER False      # a decoder 
 python -m examples.lsemvae_ecg.main ENDPOINT.LABEL_COLUMN subtype ENDPOINT.NUM_CLASSES 3
 ```
 
-With `DATASET.ROOT` empty the run generates both cohorts. That verifies the pipeline
-executes end to end; **it is not a result**, and the run says so in its first log line.
+With `DATASET.ROOT` empty the run generates both cohorts. That verifies the pipeline executes end to end; **it is not a result**, and the run says so in its first log line.
 
 ## Data
 
-Both cohorts in the paper are private clinical data — a pulmonary hypertension registry
-and a biobank — and neither is distributed. The example reads any cohorts with the
-layout below.
+Both cohorts in the paper are private clinical data — a pulmonary hypertension registry and a biobank — and neither is distributed. The example reads any cohorts with the layout below.
 
 ```text
 <DATASET.ROOT>/
@@ -84,19 +69,9 @@ layout below.
 | `ENDPOINT.VALUE_COLUMN` | The measurement the endpoint thresholds, e.g. a mean pulmonary arterial pressure in mmHg |
 | `ENDPOINT.LABEL_COLUMN` | Optional, instead of a threshold: a class the table records directly, as integers `0` to `ENDPOINT.NUM_CLASSES - 1` |
 
-The two directories are deliberately separate: pretraining consumes the large
-unlabelled set, fine-tuning the small labelled one, and keeping them apart is what
-makes it visible that no label reached the representation.
+The two directories are deliberately separate: pretraining consumes the large unlabelled set, fine-tuning the small labelled one, and keeping them apart is what makes it visible that no label reached the representation.
 
-**Lead ordering.** Recordings are stored in `ECG.LEADS` order, and the names are
-matched case-insensitively with any `LEAD_` prefix stripped, so `aVR`, `AVR` and
-`LEAD_aVR` are the same lead. `ECG.LEADS` defaults to the clinical order, I, II, III,
-aVR, aVL, aVF, V1–V6; declare your export's own order if it differs. MIMIC-IV-ECG's
-does: its records store aVF *before* aVL. This is not pedantry: in the reference implementation the
-lead list in the preprocessing script and the list the encoder indexes disagree — aVL
-and aVF are transposed between them — so a per-lead model learns aVL's representation
-from aVF's signal, and nothing crashes. Stating the order once and matching by name is
-what prevents that.
+**Lead ordering.** Recordings are stored in `ECG.LEADS` order, and the names are matched case-insensitively with any `LEAD_` prefix stripped, so `aVR`, `AVR` and `LEAD_aVR` are the same lead. `ECG.LEADS` defaults to the clinical order, I, II, III, aVR, aVL, aVF, V1–V6; declare your export's own order if it differs. MIMIC-IV-ECG's does: its records store aVF *before* aVL. This is not pedantry: in the reference implementation the lead list in the preprocessing script and the list the encoder indexes disagree — aVL and aVF are transposed between them — so a per-lead model learns aVL's representation from aVF's signal, and nothing crashes. Stating the order once and matching by name is what prevents that.
 
 ## What the configuration controls
 
@@ -118,10 +93,7 @@ what prevents that.
 | `ROBUSTNESS.ENABLED` | Score each fold's test split again with one lead fewer at each step, down to one lead |
 | `ROBUSTNESS.ORDER` | Leads withheld first, in this order. The rest go from the end of the group backwards, so by default a group is reduced towards lead I |
 
-Lead order matters to `hime`, because grouping is contiguous over the expert axis: the
-conventional order puts the limb leads in the early groups and the precordial leads in
-the later ones. A different order is a different grouping, and therefore a modelling
-choice worth stating.
+Lead order matters to `hime`, because grouping is contiguous over the expert axis: the conventional order puts the limb leads in the early groups and the precordial leads in the later ones. A different order is a different grouping, and therefore a modelling choice worth stating.
 
 ## Outputs
 
@@ -141,46 +113,24 @@ choice worth stating.
     └── interpretation.json  the same, with the ablation
 ```
 
-`lead_agreement.json` is the check available before any label exists: if the alignment
-term did its job, every lead's posterior mean sits close to the joint one, and a lead
-that does not is one whose encoder has gone its own way.
+`lead_agreement.json` is the check available before any label exists: if the alignment term did its job, every lead's posterior mean sits close to the joint one, and a lead that does not is one whose encoder has gone its own way.
 
 ## Reading the lead importance
 
-`attribution.csv` reports each lead's *integrated-gradient attribution ratio* — the
-fraction of its samples whose normalised attribution clears a threshold — and that
-fraction's share of the total. The ablation beside it answers a different question: what
-the metric loses when the lead is withheld entirely.
+`attribution.csv` reports each lead's *integrated-gradient attribution ratio* — the fraction of its samples whose normalised attribution clears a threshold — and that fraction's share of the total. The ablation beside it answers a different question: what the metric loses when the lead is withheld entirely.
 
-The two can disagree, and the disagreement is informative rather than a bug. A lead can
-be heavily attributed and still be redundant, because another lead carries the same
-information; that is expected of leads which are, after all, projections of one signal.
+The two can disagree, and the disagreement is informative rather than a bug. A lead can be heavily attributed and still be redundant, because another lead carries the same information; that is expected of leads which are, after all, projections of one signal.
 
-Both are measured in the endpoint's threshold-free metric: ROC-AUC for a binary
-endpoint, the macro one-versus-rest ROC-AUC for a graded one, and R² for a measurement.
+Both are measured in the endpoint's threshold-free metric: ROC-AUC for a binary endpoint, the macro one-versus-rest ROC-AUC for a graded one, and R² for a measurement.
 
 ## Reading the robustness curve
 
-`robustness.csv` answers the deployment question: how far can the fine-tuned model be
-pushed when leads are missing *at inference*? Each fold's test split is scored with the
-group's leads, then with one fewer, down to one; step 0 withholds nothing, so it is the
-fold's reported score. Leads are withheld through the presence mask, which for this
-model means an absent expert — exactly what a recorder that never captured the lead
-produces — rather than a flat line.
+`robustness.csv` answers the deployment question: how far can the fine-tuned model be pushed when leads are missing *at inference*? Each fold's test split is scored with the group's leads, then with one fewer, down to one; step 0 withholds nothing, so it is the fold's reported score. Leads are withheld through the presence mask, which for this model means an absent expert — exactly what a recorder that never captured the lead produces — rather than a flat line.
 
-It complements the ablation in `interpretation.json`, which withholds one lead at a time
-and asks what each is worth alone. A curve that stays flat for several steps says the
-leads withheld so far were redundant given the others; a step where it falls says which
-lead the model could not do without, *given the leads before it had already gone*.
+It complements the ablation in `interpretation.json`, which withholds one lead at a time and asks what each is worth alone. A curve that stays flat for several steps says the leads withheld so far were redundant given the others; a step where it falls says which lead the model could not do without, *given the leads before it had already gone*.
 
-Comparing curves is meaningful only within a run, on the same folds. A model fine-tuned
-on fewer leads — another `--leads` group — is a different model, and its score is in
-`results.csv`.
+Comparing curves is meaningful only within a run, on the same folds. A model fine-tuned on fewer leads — another `--leads` group — is a different model, and its score is in `results.csv`.
 
 ## Attribution
 
-The methodology is the authors'; the implementation here is a refactor. Two departures
-from the reference implementation are deliberate and documented in
-[`docs/models.md`](../../docs/models.md): the prior expert is no longer silently
-discarded by the grouping, and the KL term is taken against the posterior that was
-actually sampled from. Please cite the original paper if you build on this.
+The methodology is the authors'; the implementation here is a refactor. Two departures from the reference implementation are deliberate and documented in [`docs/models.md`](../../docs/models.md): the prior expert is no longer silently discarded by the grouping, and the KL term is taken against the posterior that was actually sampled from. Please cite the original paper if you build on this.

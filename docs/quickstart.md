@@ -4,8 +4,7 @@ From a fresh checkout to a trained cardiac model, with no data.
 
 ## Install
 
-KaleCardiac supports Python 3.10, 3.11 and 3.12. Install
-[PyTorch](https://pytorch.org/get-started/locally/) matching your hardware first, then:
+KaleCardiac supports Python 3.10, 3.11 and 3.12. Install [PyTorch](https://pytorch.org/get-started/locally/) matching your hardware first, then:
 
 ```bash
 git clone https://github.com/pykale/cardiac.git
@@ -22,9 +21,7 @@ pip install -e ".[interpret]"  # captum, umap-learn — attribution and latent p
 pip install -e ".[dev]"        # pytest, ruff, mypy, pre-commit
 ```
 
-The signal and image transforms are pure NumPy and Torch, so the core install is enough
-to preprocess arrays, train every model and score it. The extras are for reading formats
-and explaining results.
+The signal and image transforms are pure NumPy and Torch, so the core install is enough to preprocess arrays, train every model and score it. The extras are for reading formats and explaining results.
 
 Check it:
 
@@ -41,14 +38,11 @@ python -m examples.cardiovae_multimodal.main --cfg examples/cardiovae_multimodal
 python -m examples.lsemvae_ecg.main --cfg examples/lsemvae_ecg/configs/quick.yaml
 ```
 
-Each takes about a minute on a CPU and writes predictions, metrics and a configuration
-record to `outputs/`. The first log line says the run is synthetic — **a number from it
-verifies the pipeline, it is not a result**.
+Each takes about a minute on a CPU and writes predictions, metrics and a configuration record to `outputs/`. The first log line says the run is synthetic — **a number from it verifies the pipeline, it is not a result**.
 
 ## The same thing from Python
 
-The shortest complete workflow: load, preprocess, pretrain without labels, fine-tune on
-an endpoint, score.
+The shortest complete workflow: load, preprocess, pretrain without labels, fine-tune on an endpoint, score.
 
 ```python
 import pytorch_lightning as pl
@@ -116,9 +110,7 @@ predictions = predict_split(model, loader(ids["test"]), split="test")
 print(binary_metrics(predictions.targets["label"], predictions.scores))
 ```
 
-The one line worth pausing on is `vae.latent_embedders(["I", "II", "aVF"], frozen=True)`.
-The model was pretrained on six leads and is being fine-tuned on three — that is the
-twelve-to-six transfer both cardiac studies rest on, and it is a list argument.
+The one line worth pausing on is `vae.latent_embedders(["I", "II", "aVF"], frozen=True)`. The model was pretrained on six leads and is being fine-tuned on three — that is the twelve-to-six transfer both cardiac studies rest on, and it is a list argument.
 
 ## On your own cohort
 
@@ -135,9 +127,7 @@ recordings = ECGFileSource(
 )
 ```
 
-`ECGFileSource` reads in the DataLoader worker and reuses the most recent read, so
-exploding a recording into per-lead modalities costs one read per subject rather than
-one per lead. For a format it does not know — WFDB, a vendor export — pass a `loader`:
+`ECGFileSource` reads in the DataLoader worker and reuses the most recent read, so exploding a recording into per-lead modalities costs one read per subject rather than one per lead. For a format it does not know — WFDB, a vendor export — pass a `loader`:
 
 ```python
 import wfdb
@@ -145,12 +135,7 @@ import wfdb
 ECGFileSource(paths, leads=..., loader=lambda path: wfdb.rdsamp(str(path.with_suffix("")))[0].T)
 ```
 
-A folder of DICOM exports, one folder per subject, needs no loader. `ECGFileSource.from_dicom(root)`
-and `ImageFileSource.from_dicom(root)` read them through PyKale's DICOM reader, taking the leads'
-names, their rate and an image's display settings from the files themselves; both
-tutorials -- [CardioVAE](https://github.com/pykale/cardiac/blob/main/tutorials/mdas_tutorial/tutorial-CardioVAE.ipynb)
-and [LS-EMVAE](https://github.com/pykale/cardiac/blob/main/tutorials/mdas_tutorial/tutorial-LSEMVAE.ipynb) --
-start from them.
+A folder of DICOM exports, one folder per subject, needs no loader. `ECGFileSource.from_dicom(root)` and `ImageFileSource.from_dicom(root)` read them through PyKale's DICOM reader, taking the leads' names, their rate and an image's display settings from the files themselves; both tutorials -- [CardioVAE](https://github.com/pykale/cardiac/blob/main/tutorials/mdas_tutorial/tutorial-CardioVAE.ipynb) and [LS-EMVAE](https://github.com/pykale/cardiac/blob/main/tutorials/mdas_tutorial/tutorial-LSEMVAE.ipynb) -- start from them.
 
 Then point an example at it:
 
@@ -196,9 +181,7 @@ print(attribution_ratios(attributions))  # which lead was attended to
 print(modality_ablation(model, loader(ids["test"]), roc_auc, "label"))  # which lead was needed
 ```
 
-The two answer different questions and can disagree — a lead can be heavily attributed
-and still redundant. See [multimodal_fusion.md](multimodal_fusion.md) and
-[architecture.md](architecture.md#evaluation-and-interpretation).
+The two answer different questions and can disagree — a lead can be heavily attributed and still redundant. See [multimodal_fusion.md](multimodal_fusion.md) and [architecture.md](architecture.md#evaluation-and-interpretation).
 
 ## Development
 
@@ -207,8 +190,7 @@ pip install -e ".[dev,interpret]"
 pre-commit run --all-files && pytest --cov=kalecardiac
 ```
 
-The suite needs no data and no network. To skip the whole-workflow example runs, which
-are the slow part:
+The suite needs no data and no network. To skip the whole-workflow example runs, which are the slow part:
 
 ```bash
 pytest -m "not slow"

@@ -1,0 +1,15 @@
+# Copied from PyKale (pykale/pykale), .github/dependabot.yml, and updated:
+# - Python dependencies keep PyKale's pip ecosystem, which reads the bounds in pyproject.toml.
+# - GitHub Actions are updated too, including the commit-pinned action in changelog.yml.
+# https://docs.github.com/en/code-security/dependabot/working-with-dependabot/dependabot-options-reference
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
