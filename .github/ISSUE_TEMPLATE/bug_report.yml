@@ -1,14 +1,21 @@
-name: Bug report
+# KaleCardiac's form, with PyKale's name and title prefix from its bug-report.md.
+name: "🐛 Bug report"
 description: Something in KaleCardiac does not work as documented
+title: "[Bug] "
 labels: ["bug"]
 body:
   - type: markdown
     attributes:
       value: |
+        Thanks for helping improve KaleCardiac, part of the [PyKale](https://github.com/pykale/pykale) family.
+
         **Do not include patient data.** No recordings, images, identifiers, labels, file
         paths from a clinical system or screenshots of records -- not even "anonymised"
         ones. Reproduce the problem on a synthetic cohort from `examples/synthetic_data.py`;
         if it only appears on your data, vary the generator's arguments until it shows.
+
+        If the problem is in PyKale itself (anything imported from `kale`), report it in
+        [pykale/pykale](https://github.com/pykale/pykale/issues) instead.
 
   - type: textarea
     id: what-happened

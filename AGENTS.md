@@ -167,7 +167,7 @@ An example owns its configuration, its cohort construction -- where the files ar
 3. Add tests in the mirrored `tests/` path, using synthetic data.
 4. Add any new setting to `kalecardiac/config.py` with a comment saying why it exists.
 5. A new module needs an `automodule` entry in the matching `docs/kalecardiac.<stage>.rst`; `tests/test_docs.py` fails until it has one.
-6. Record the change in `CHANGELOG.md` under *Unreleased*.
+6. Title the pull request as its changelog entry and give it one label; the changelog is generated at release (see [CONTRIBUTING.md](CONTRIBUTING.md#releasing)).
 7. Run the format, lint and test commands above.
 
 Before adding an abstraction, check it has a second user. This package has no protocol with one implementation, no registry with one entry, and no factory that exists for theoretical extensibility.

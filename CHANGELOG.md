@@ -2,6 +2,8 @@
 
 Notable changes to KaleCardiac. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [Semantic Versioning](https://semver.org/) from 1.0 onwards.
 
+This file is no longer updated. From the next release, the changelog is generated from merged pull requests into [.github/CHANGELOG.md](.github/CHANGELOG.md), as in PyKale; see [Releasing](CONTRIBUTING.md#releasing). The unreleased work below can be folded into that release's section when it is reviewed.
+
 ## [Unreleased]
 
 ### Added
