@@ -110,7 +110,7 @@ jobs:
         if: steps.version.outputs.version != ''
         # v6.3.0, pinned to a commit so an upstream tag move cannot change the
         # code that runs here. Dependabot can bump this.
-        uses: mikepenz/release-changelog-builder-action@cb021f9b36a51a7c6f18e4679b6fa2cb77a1260c
+        uses: mikepenz/release-changelog-builder-action@b0db9d18b53447ef9f940a46c8f31653c4d9f621
         with:
           configuration: ${{ runner.temp }}/changelog-config.json
           fromTag: ${{ steps.previous.outputs.tag }}
