@@ -1,7 +1,6 @@
 # CardioVAE: chest X-ray and ECG for cardiac haemodynamics
 
-Multimodal representation learning from the two cheapest cardiac investigations, then
-fine-tuning onto an endpoint that otherwise requires a catheter.
+Multimodal representation learning from the two cheapest cardiac investigations, then fine-tuning onto an endpoint that otherwise requires a catheter.
 
 ```text
 chest X-ray + ECG
@@ -13,13 +12,7 @@ fine-tuning                            (labelled, frozen encoders + a clinical h
 cardiac haemodynamic prediction
 ```
 
-This reproduces the workflow of Suvon et al., *Multimodal Variational Autoencoder for
-Low-cost Cardiac Hemodynamics Instability Detection*, MICCAI 2024
-([arXiv:2403.13658](https://arxiv.org/abs/2403.13658),
-[reference implementation](https://github.com/Shef-AIRE/AI4Cardiothoracic-CardioVAE)).
-Every model, objective, metric and training loop comes from `kalecardiac`; this
-directory holds only what is specific to the experiment — the cohort layout, the
-endpoint definition, the fold structure, and the report.
+This reproduces the workflow of Suvon et al., *Multimodal Variational Autoencoder for Low-cost Cardiac Hemodynamics Instability Detection*, MICCAI 2024 ([arXiv:2403.13658](https://arxiv.org/abs/2403.13658), [reference implementation](https://github.com/Shef-AIRE/AI4Cardiothoracic-CardioVAE)). Every model, objective, metric and training loop comes from `kalecardiac`; this directory holds only what is specific to the experiment — the cohort layout, the endpoint definition, the fold structure, and the report.
 
 ## Run it
 
@@ -41,15 +34,11 @@ python -m examples.cardiovae_multimodal.main ENDPOINT.REGRESSION True
 python -m examples.cardiovae_multimodal.main ENDPOINT.LABEL_COLUMN subtype ENDPOINT.NUM_CLASSES 3
 ```
 
-With `DATASET.ROOT` empty the run generates its cohort. That verifies the pipeline
-executes end to end; **it is not a result**, and the run says so in its first log line.
+With `DATASET.ROOT` empty the run generates its cohort. That verifies the pipeline executes end to end; **it is not a result**, and the run says so in its first log line.
 
 ## Data
 
-The cohort the paper used is a clinical registry holding identifiable patient data and
-is not distributed — not here and not anywhere. The example reads any cohort with the
-layout below, so a researcher with approved access to one can reproduce the workflow by
-supplying their own path.
+The cohort the paper used is a clinical registry holding identifiable patient data and is not distributed — not here and not anywhere. The example reads any cohort with the layout below, so a researcher with approved access to one can reproduce the workflow by supplying their own path.
 
 ```text
 <DATASET.ROOT>/
@@ -68,15 +57,9 @@ supplying their own path.
 | `ENDPOINT.VALUE_COLUMN` | The measurement the endpoint thresholds, e.g. a mean pulmonary arterial pressure in mmHg |
 | `ENDPOINT.LABEL_COLUMN` | Optional, instead of a threshold: a class the table records directly, as integers `0` to `ENDPOINT.NUM_CLASSES - 1` |
 
-Subjects with a recording and an image but no row in the table still take part in
-**pretraining** — that asymmetry is the point of the method. Subjects with no recorded
-measurement are dropped from fine-tuning rather than assumed negative, and the run
-logs how many.
+Subjects with a recording and an image but no row in the table still take part in **pretraining** — that asymmetry is the point of the method. Subjects with no recorded measurement are dropped from fine-tuning rather than assumed negative, and the run logs how many.
 
-Pretraining in the paper used large public collections of radiographs and ECGs
-available from PhysioNet under their own credentialing; point `DATASET.ROOT` at a
-directory prepared from those, or pretrain separately and load the checkpoint with
-`MODEL.PRETRAINED`.
+Pretraining in the paper used large public collections of radiographs and ECGs available from PhysioNet under their own credentialing; point `DATASET.ROOT` at a directory prepared from those, or pretrain separately and load the checkpoint with `MODEL.PRETRAINED`.
 
 ## What the configuration controls
 
@@ -116,25 +99,14 @@ directory prepared from those, or pretrain separately and load the checkpoint wi
     └── interpretation.json the same, with the modality ablation
 ```
 
-The ablation in `interpretation.json` withholds each modality in turn and rescores the
-last fold's test split, in the endpoint's threshold-free metric: ROC-AUC, the macro
-one-versus-rest ROC-AUC for a graded endpoint, or R² for a measurement. A one-modality
-arm has none, since withholding its only modality leaves the model nothing to read.
+The ablation in `interpretation.json` withholds each modality in turn and rescores the last fold's test split, in the endpoint's threshold-free metric: ROC-AUC, the macro one-versus-rest ROC-AUC for a graded endpoint, or R² for a measurement. A one-modality arm has none, since withholding its only modality leaves the model nothing to read.
 
 ## Reading the numbers
 
-Cross-validation over a few hundred subjects is what makes a cardiac result reportable
-at all at this cohort size, but the folds share training subjects and are not
-independent: the standard deviation across them describes how the estimate varied, not
-a confidence interval for the population. For the latter, `kalecardiac.evaluate`
-provides `bootstrap_ci`, which resamples subjects instead.
+Cross-validation over a few hundred subjects is what makes a cardiac result reportable at all at this cohort size, but the folds share training subjects and are not independent: the standard deviation across them describes how the estimate varied, not a confidence interval for the population. For the latter, `kalecardiac.evaluate` provides `bootstrap_ci`, which resamples subjects instead.
 
-The modality arms are scored on the same subjects by construction
-(`DATASET.REQUIRE_MODALITIES`), so the comparison between them is meaningful. Comparing
-against the published figures is not: those were obtained on a different cohort.
+The modality arms are scored on the same subjects by construction (`DATASET.REQUIRE_MODALITIES`), so the comparison between them is meaningful. Comparing against the published figures is not: those were obtained on a different cohort.
 
 ## Attribution
 
-The methodology is the authors'; the implementation here is a refactor, and any
-difference is documented in [`docs/models.md`](../../docs/models.md). Please cite the
-original paper if you build on this.
+The methodology is the authors'; the implementation here is a refactor, and any difference is documented in [`docs/models.md`](../../docs/models.md). Please cite the original paper if you build on this.

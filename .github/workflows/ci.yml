@@ -1,6 +1,8 @@
 name: CI
 
 on:
+  # changelog.yml dispatches CI on the release pull request's changelog commit.
+  workflow_dispatch:
   push:
     branches: [main, migration/pykale-core]
   pull_request:
@@ -58,7 +60,14 @@ jobs:
       # The library's docstring examples run as part of this, via --doctest-modules.
       - name: pytest
         # Every line of the library is exercised; the floor leaves room without letting it slide.
-        run: pytest --cov=kalecardiac --cov-report=term-missing --cov-fail-under=98
+        run: pytest --cov=kalecardiac --cov-report=term-missing --cov-report=xml --cov-fail-under=98
+
+      # As in PyKale. A failed upload, e.g. from a fork without the token, does not fail CI.
+      - name: Report coverage
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage.xml
 
   examples:
     name: Examples from the command line (synthetic)

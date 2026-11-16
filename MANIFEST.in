@@ -3,6 +3,8 @@
 # and the exclusions below keep anything recording-, image- or checkpoint-shaped out.
 # The wheel is unaffected: it ships the library alone.
 graft tests
+# Tests of the repository's .github automation, which a distribution does not carry.
+prune tests/github
 graft examples
 graft docs
 graft tutorials

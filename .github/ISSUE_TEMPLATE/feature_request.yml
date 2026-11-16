@@ -1,5 +1,7 @@
-name: Feature request
-description: Propose a new capability, or a change to an existing one
+# KaleCardiac's form, with PyKale's name and title prefix from its feature-request.md.
+name: "🚀 Feature request"
+description: Propose a new KaleCardiac capability, or a change to an existing one
+title: "[Feature Request] "
 labels: ["enhancement"]
 body:
   - type: textarea
