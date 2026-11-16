@@ -7,16 +7,9 @@
 -----------------------------------------
 
 <!-- Keep badges to just ONE line, i.e. only the most important badges! -->
-[![Built on PyKale](https://img.shields.io/badge/built%20on-PyKale-5699C6)](https://github.com/pykale/pykale)
-[![CI](https://github.com/pykale/cardiac/actions/workflows/ci.yml/badge.svg)](https://github.com/pykale/cardiac/actions/workflows/ci.yml)
-[![GitHub license](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/pykale/cardiac/blob/main/LICENSE)
-[![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue)](https://www.python.org)
+[![Built on PyKale](https://img.shields.io/badge/built%20on-PyKale-5699C6)](https://github.com/pykale/pykale) [![CI](https://github.com/pykale/cardiac/actions/workflows/ci.yml/badge.svg)](https://github.com/pykale/cardiac/actions/workflows/ci.yml) [![codecov](https://codecov.io/gh/pykale/cardiac/branch/main/graph/badge.svg)](https://codecov.io/gh/pykale/cardiac) [![CodeQL](https://github.com/pykale/cardiac/actions/workflows/codeql-analysis.yml/badge.svg)](https://github.com/pykale/cardiac/actions/workflows/codeql-analysis.yml) [![GitHub license](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/pykale/cardiac/blob/main/LICENSE) [![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue)](https://www.python.org) [![PyPI version](https://img.shields.io/pypi/v/kalecardiac?color=blue)](https://pypi.org/project/kalecardiac/)
 
-[Getting Started](https://github.com/pykale/cardiac#how-to-use) |
-[Documentation](https://github.com/pykale/cardiac/tree/main/docs) |
-[Examples](https://github.com/pykale/cardiac/tree/main/examples) |
-[Contributing](https://github.com/pykale/cardiac#step-2-building-and-contributing) |
-[Architecture](https://github.com/pykale/cardiac/blob/main/docs/architecture.md)
+[Getting Started](https://github.com/pykale/cardiac#how-to-use) | [Documentation](https://github.com/pykale/cardiac/tree/main/docs) | [Examples](https://github.com/pykale/cardiac/tree/main/examples) | [Contributing](https://github.com/pykale/cardiac#step-2-building-and-contributing) | [Architecture](https://github.com/pykale/cardiac/blob/main/docs/architecture.md)
 
 KaleCardiac is a cardiovascular library built on [PyKale](https://github.com/pykale/pykale), a library in the [PyTorch ecosystem](https://pytorch.org/ecosystem/), aiming to make cardiac machine learning more accessible to interdisciplinary research by bridging gaps between clinical data, software, and end users. Both machine learning experts and clinical researchers can do better research with our accessible, scalable, and sustainable design, guided by green machine learning principles. KaleCardiac inherits PyKale's unified *pipeline-based* API and extends it where cardiology needs more: [multimodal learning](https://en.wikipedia.org/wiki/Multimodal_learning) across electrocardiography, radiography and cardiac imaging, and *representation learning* that turns plentiful unlabelled recordings into a model a small labelled cohort can be fine-tuned on.
 

@@ -6,23 +6,11 @@ The public API of `kalecardiac`, stage by stage, following the pipeline:
 load  →  preprocess  →  embed  →  fuse  →  predict  →  evaluate  →  interpret
 ```
 
-For *why* it is shaped this way, see [docs/architecture.md](docs/architecture.md). For a
-running example, [docs/quickstart.md](docs/quickstart.md).
+For *why* it is shaped this way, see [docs/architecture.md](docs/architecture.md). For a running example, [docs/quickstart.md](docs/quickstart.md).
 
-**Names follow PyKale.** Modules are named for the modality they serve
-(`signal_access`, `image_access`, `signal_transform`, `image_transform`), functions that
-act start with a verb (`load_`, `get_`, `check_`, `normalize_`, `interpolate_`,
-`resample_`), and spelling is American, as in PyKale, scikit-learn and PyTorch. Where
-PyKale already has a function, the name is PyKale's: `interpolate_signal` and
-`normalize_signal` are the functions `kale.prepdata.signal_transform` has, for the
-`(channels, samples)` layout used here. Metrics and losses are nouns, as in
-scikit-learn and `torch.nn.functional`.
+**Names follow PyKale.** Modules are named for the modality they serve (`signal_access`, `image_access`, `signal_transform`, `image_transform`), functions that act start with a verb (`load_`, `get_`, `check_`, `normalize_`, `interpolate_`, `resample_`), and spelling is American, as in PyKale, scikit-learn and PyTorch. Where PyKale already has a function, the name is PyKale's: `interpolate_signal` and `normalize_signal` are the functions `kale.prepdata.signal_transform` has, for the `(channels, samples)` layout used here. Metrics and losses are nouns, as in scikit-learn and `torch.nn.functional`.
 
-**Nothing here duplicates a library this one depends on.** Transforms are chained with
-`torchvision.transforms.Compose`; classification and regression losses are PyTorch's;
-class weights come from scikit-learn's `compute_class_weight`; resampling is SciPy's
-polyphase `resample_poly`; R², RMSE and MAE are scikit-learn's. What this package
-defines is what those libraries do not have.
+**Nothing here duplicates a library this one depends on.** Transforms are chained with `torchvision.transforms.Compose`; classification and regression losses are PyTorch's; class weights come from scikit-learn's `compute_class_weight`; resampling is SciPy's polyphase `resample_poly`; R², RMSE and MAE are scikit-learn's. What this package defines is what those libraries do not have.
 
 ---
 
@@ -74,9 +62,7 @@ shares = attribution_ratios(modality_attributions(model.model, batch.modalities)
 
 ### Sources
 
-A `ModalitySource` answers two questions per subject: what its value is, and what shape
-to substitute when there is not one. Implement it to add a *kind* of modality; adding a
-modality is a dictionary entry.
+A `ModalitySource` answers two questions per subject: what its value is, and what shape to substitute when there is not one. Implement it to add a *kind* of modality; adding a modality is a dictionary entry.
 
 | Name | Reads |
 | --- | --- |
@@ -92,16 +78,11 @@ modality is a dictionary entry.
 
 ### Lead vocabulary
 
-`STANDARD_12_LEAD`, `LIMB_LEADS`, `PRECORDIAL_LEADS`, and `normalize_lead_name` /
-`normalize_lead_names` / `get_lead_indices`, which match names case-insensitively with a `LEAD_`
-or `Lead` prefix stripped -- so DICOM's `Lead I (Einthoven)` is lead `I`. `check_ecg_array` and
-`check_image_array` coerce shapes, transposing only where it is unambiguous.
+`STANDARD_12_LEAD`, `LIMB_LEADS`, `PRECORDIAL_LEADS`, and `normalize_lead_name` / `normalize_lead_names` / `get_lead_indices`, which match names case-insensitively with a `LEAD_` or `Lead` prefix stripped -- so DICOM's `Lead I (Einthoven)` is lead `I`. `check_ecg_array` and `check_image_array` coerce shapes, transposing only where it is unambiguous.
 
 ### DICOM
 
-Read with PyKale's `kale.loaddata.image_access.read_dicom_phases`, one subject per folder, the
-folder's name -- not the header's `PatientID` -- identifying the subject, since that is what
-pairs one modality's export with another's. Needs the `imaging` extra.
+Read with PyKale's `kale.loaddata.image_access.read_dicom_phases`, one subject per folder, the folder's name -- not the header's `PatientID` -- identifying the subject, since that is what pairs one modality's export with another's. Needs the `imaging` extra.
 
 | Name | What it does |
 | --- | --- |
@@ -121,9 +102,7 @@ pairs one modality's export with another's. Needs the `imaging` extra.
 
 ### Splitting
 
-Splitter objects with scikit-learn's shape, producing a **named** mapping rather than a
-pair. Rows sharing `group_by` always land together — in a cardiac cohort that is not a
-formality, since one subject often contributes several recordings.
+Splitter objects with scikit-learn's shape, producing a **named** mapping rather than a pair. Rows sharing `group_by` always land together — in a cardiac cohort that is not a formality, since one subject often contributes several recordings.
 
 | Name | Test set |
 | --- | --- |
@@ -131,18 +110,13 @@ formality, since one subject often contributes several recordings.
 | `CrossValidationSplit(n_splits, ...)` | Each fold in turn. The default for a cohort of a few hundred |
 | `PredefinedSplit(assignment, ...)` | An assignment the study fixed |
 
-`SPLIT_NAMES` is `("train", "val", "test")`. Validation is always carved out of the
-training half; `val_size=0` gives a plain two-way split. Each splitter draws its folds
-with scikit-learn's `StratifiedGroupKFold`, `StratifiedKFold` or `StratifiedShuffleSplit`
-and adds what those lack: a third, validation set, and stratification by several columns
-at once (`get_stratification_labels`).
+`SPLIT_NAMES` is `("train", "val", "test")`. Validation is always carved out of the training half; `val_size=0` gives a plain two-way split. Each splitter draws its folds with scikit-learn's `StratifiedGroupKFold`, `StratifiedKFold` or `StratifiedShuffleSplit` and adds what those lack: a third, validation set, and stratification by several columns at once (`get_stratification_labels`).
 
 ---
 
 ## `prepdata` — transforms
 
-**Nothing here is fitted.** Every transform is a function of one recording or one image,
-so a source may apply it without knowing which split the subject landed in.
+**Nothing here is fitted.** Every transform is a function of one recording or one image, so a source may apply it without knowing which split the subject landed in.
 
 ### Signals — `(channels, samples)` in, the same out
 
@@ -171,8 +145,7 @@ Steps are chained with `torchvision.transforms.Compose`; a source's `transform` 
 
 ### Images — `(channels, height, width)` in, the same out
 
-`resize_image`, `scale_image_intensity`, `normalize_image`, `check_image`, and
-`get_image_transform(size, scale=True)`, which returns a `Compose`.
+`resize_image`, `scale_image_intensity`, `normalize_image`, `check_image`, and `get_image_transform(size, scale=True)`, which returns a `Compose`.
 
 ---
 
@@ -180,8 +153,7 @@ Steps are chained with `torchvision.transforms.Compose`; a source's `transform` 
 
 ### Gaussian experts — the mathematical core
 
-All take `mean` and `log_var` of `(M, B, D)` and an optional `(M, B)` mask, and return a
-`GaussianPosterior`.
+All take `mean` and `log_var` of `(M, B, D)` and an optional `(M, B)` mask, and return a `GaussianPosterior`.
 
 | Name | Combines by |
 | --- | --- |
@@ -199,9 +171,7 @@ All take `mean` and `log_var` of `(M, B, D)` and an optional `(M, B)` mask, and 
 
 ### Backbones and decoders
 
-`Conv1dEncoder` / `Conv1dDecoder`, `Conv2dEncoder` / `Conv2dDecoder`,
-`ResidualConv1dEncoder`, `TransformerSignalEncoder`, `MLP`, plus `conv_output_length`
-and `conv_output_size`.
+`Conv1dEncoder` / `Conv1dDecoder`, `Conv2dEncoder` / `Conv2dDecoder`, `ResidualConv1dEncoder`, `TransformerSignalEncoder`, `MLP`, plus `conv_output_length` and `conv_output_size`.
 
 ---
 
@@ -229,15 +199,11 @@ MultimodalVAE(encoders, decoders, latent_dim, fusion="poe", use_prior=True, **fu
 - `.forward(modalities, present, unimodal_streams=False)` → `VAEOutput`
 - `.latent_embedders(modalities=None, frozen=True)` → the embedders a predictor fuses
 
-`VAEOutput` carries `joint` (a `VAEStream`), `unimodal`, `modality_posteriors` and
-`present`, with `.posterior` and `.latent` as shorthands for the joint.
+`VAEOutput` carries `joint` (a `VAEStream`), `unimodal`, `modality_posteriors` and `present`, with `.posterior` and `.latent` as shorthands for the joint.
 
-Named configurations: `CardioVAE(..., fusion="poe")` and `LSEMVAE(leads=..., fusion="hime")`. Both take
-`fusion`, `use_prior` and `kernel_size`, so an ablation is an argument rather than a model.
+Named configurations: `CardioVAE(..., fusion="poe")` and `LSEMVAE(leads=..., fusion="hime")`. Both take `fusion`, `use_prior` and `kernel_size`, so an ablation is an argument rather than a model.
 
-`CardioVAE()` with its defaults is PyKale's `SignalImageVAE()` parameter for parameter,
-and `CardioVAE.load_pykale_state_dict(state_dict)` loads the weights PyKale -- or the
-reference implementation -- saved; `remap_pykale_state_dict` is the renaming it applies.
+`CardioVAE()` with its defaults is PyKale's `SignalImageVAE()` parameter for parameter, and `CardioVAE.load_pykale_state_dict(state_dict)` loads the weights PyKale -- or the reference implementation -- saved; `remap_pykale_state_dict` is the renaming it applies.
 
 ### Discriminative model
 
@@ -245,10 +211,7 @@ reference implementation -- saved; `remap_pykale_state_dict` is the renaming it 
 MultimodalPredictor(embedders, head_factory, method="concat", fusion_dim=None, modality_dropout=0.0)
 ```
 
-Returns a `PredictionOutput` with `prediction`, `representation`, `embeddings` and, for
-attention fusion, `weights`. Fusion blocks: `ConcatFusion`, `MeanFusion`,
-`AttentionFusion`, with `FUSION_METHODS` and `build_fusion`. `modality_dropout` teaches
-a model to survive a missing lead.
+Returns a `PredictionOutput` with `prediction`, `representation`, `embeddings` and, for attention fusion, `weights`. Fusion blocks: `ConcatFusion`, `MeanFusion`, `AttentionFusion`, with `FUSION_METHODS` and `build_fusion`. `modality_dropout` teaches a model to survive a missing lead.
 
 ---
 
@@ -266,10 +229,7 @@ a model to survive a missing lead.
 | `reconstruction_loss(recon, target, present, kind)` | Per modality, excluding absent subjects |
 | `latent_alignment_loss(modality_posteriors, joint, present)` | Pulls each modality towards the consensus. The joint is detached |
 
-The discriminative objectives are PyTorch's: a task calls
-`binary_cross_entropy_with_logits`, `cross_entropy` and `mse_loss` directly. A class
-weight comes from scikit-learn's `compute_class_weight("balanced", ...)`, over the
-**training** split only.
+The discriminative objectives are PyTorch's: a task calls `binary_cross_entropy_with_logits`, `cross_entropy` and `mse_loss` directly. A class weight comes from scikit-learn's `compute_class_weight("balanced", ...)`, over the **training** split only.
 
 ---
 
@@ -279,9 +239,7 @@ weight comes from scikit-learn's `compute_class_weight("balanced", ...)`, over t
 CardiacTrainer(model, task, optimizer=None, max_epochs=50, init_lr=1e-3, grad_clip=0.0)
 ```
 
-`.forward(batch)`, `.predict(batch)` (no gradients, mode restored), `.compute_loss(batch,
-split_name)`, and `.monitor` / `.monitor_mode` for configuring a checkpoint or
-early-stopping callback without knowing which way the metric runs.
+`.forward(batch)`, `.predict(batch)` (no gradients, mode restored), `.compute_loss(batch, split_name)`, and `.monitor` / `.monitor_mode` for configuring a checkpoint or early-stopping callback without knowing which way the metric runs.
 
 | Task | Supervises on | Metric |
 | --- | --- | --- |
@@ -289,9 +247,7 @@ early-stopping callback without knowing which way the metric runs.
 | `ClassificationTask(num_classes=2, pos_weight, class_weight, hidden_dims, dropout)` | `label` | ROC-AUC; macro one-versus-rest above two classes |
 | `RegressionTask(hidden_dims, dropout)` | `value` | R² |
 
-A task decides exactly four things: the head, the loss, what the model is asked to
-produce (`forward_kwargs`), and the epoch metric. A new endpoint is a new task, never a
-new trainer.
+A task decides exactly four things: the head, the loss, what the model is asked to produce (`forward_kwargs`), and the epoch metric. A new endpoint is a new task, never a new trainer.
 
 ---
 
@@ -315,8 +271,7 @@ new trainer.
 
 Binary labels must be exactly 0 or 1, and multiclass labels must be valid class indices. A two-column multiclass score uses binary ROC-AUC. Bootstrap resamples with NaN or infinite metrics are skipped; a non-finite metric on the full split raises `MetricError`.
 
-`MetricError` is raised where a metric cannot be computed — a one-class split, say —
-which a trainer treats as "skip this epoch's metric" rather than a failure.
+`MetricError` is raised where a metric cannot be computed — a one-class split, say — which a trainer treats as "skip this epoch's metric" rather than a failure.
 
 Scores may be logits or probabilities throughout. Binary scores in `[0, 1]` and multiclass rows in `[0, 1]` that sum to one are read as probabilities, and anything else as logits. Multiclass logits pass through a softmax because one-versus-rest ranking can change after that conversion.
 
@@ -345,10 +300,7 @@ Everything returns arrays and dictionaries. Nothing plots.
 
 ## `auto` — the same workflow, read from a configuration
 
-Every stage above takes explicit arguments. `kalecardiac.auto` reads them from a YACS
-configuration instead, and holds what every experiment does with the same settings the
-same way, so an example keeps only where its cohort is, what its columns mean and which
-model it builds:
+Every stage above takes explicit arguments. `kalecardiac.auto` reads them from a YACS configuration instead, and holds what every experiment does with the same settings the same way, so an example keeps only where its cohort is, what its columns mean and which model it builds:
 
 ```python
 from kalecardiac.auto import check_endpoint, cross_validate, derive_endpoint, get_endpoint_target, get_folds, pretrain
@@ -379,23 +331,13 @@ summary = cross_validate(cfg, pretrained, six_lead_sources, target, get_folds(cf
 
 ## `utils` and `config`
 
-`set_seed`, `seed_worker`, `ensure_dir`, `write_json`, `write_csv`, and
-`load_checkpoint(path, model, strict)` — which unwraps a `torch.compile` or Lightning
-prefix, so loading a pretrained cardiac model is one line rather than a key-mangling
-dictionary comprehension.
+`set_seed`, `seed_worker`, `ensure_dir`, `write_json`, `write_csv`, and `load_checkpoint(path, model, strict)` — which unwraps a `torch.compile` or Lightning prefix, so loading a pretrained cardiac model is one line rather than a key-mangling dictionary comprehension.
 
-`preserve_rng_state()` is a context manager for work that only reports — an ablation, an
-attribution, a latent projection. Every DataLoader pass draws from PyTorch's generator,
-so without it, turning a report on or off would change every model trained after it.
+`preserve_rng_state()` is a context manager for work that only reports — an ablation, an attribution, a latent projection. Every DataLoader pass draws from PyTorch's generator, so without it, turning a report on or off would change every model trained after it.
 
-`get_cfg_defaults()` returns the YACS schema; `parse_weights(["ecg:10", "cxr:1"])` reads
-per-modality weights, which are pairs because the modality names belong to the dataset
-rather than to the schema.
+`get_cfg_defaults()` returns the YACS schema; `parse_weights(["ecg:10", "cxr:1"])` reads per-modality weights, which are pairs because the modality names belong to the dataset rather than to the schema.
 
-`kalecardiac.utils.renames` lists the names the API had before it took PyKale's. Each
-subpackage consults it, so `from kalecardiac.prepdata import standardise` fails saying
-it is now `normalize_signal`, and a YAML file setting `ECG.STANDARDISE` fails saying
-`ECG.NORMALIZE`, rather than either failing as a name that never existed.
+`kalecardiac.utils.renames` lists the names the API had before it took PyKale's. Each subpackage consults it, so `from kalecardiac.prepdata import standardise` fails saying it is now `normalize_signal`, and a YAML file setting `ECG.STANDARDISE` fails saying `ECG.NORMALIZE`, rather than either failing as a name that never existed.
 
 ---
 
@@ -410,6 +352,4 @@ it is now `normalize_signal`, and a YAML file setting `ECG.STANDARDISE` fails sa
 | `binary_metrics`, `bootstrap_ci` | What the endpoint is, and where its threshold falls |
 | `modality_ablation` | The figure it goes into |
 
-Enforced by [`tests/test_package_structure.py`](tests/test_package_structure.py), which
-fails if a library module names a cohort outside a docstring, hardcodes an absolute
-path, or imports from `examples/`.
+Enforced by [`tests/test_package_structure.py`](tests/test_package_structure.py), which fails if a library module names a cohort outside a docstring, hardcodes an absolute path, or imports from `examples/`.
