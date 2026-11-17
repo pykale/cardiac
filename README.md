@@ -60,7 +60,13 @@ KaleCardiac enforces the same *standardization* and *minimalism* as PyKale, via 
 
 KaleCardiac supports Python 3.10, 3.11, or 3.12. Before installing `kalecardiac`, we suggest you to first [install PyTorch](https://pytorch.org/get-started/locally/) matching your hardware, and then [install PyKale](https://pykale.readthedocs.io/en/latest/installation.html) following its official instructions. PyKale 0.2 requires `torch<=2.6.0`, so choose a PyTorch 2.6 or earlier build; a newer one would be replaced during installation.
 
-Installation of `kalecardiac` from source:
+Install `kalecardiac` from [PyPI](https://pypi.org/project/kalecardiac/):
+
+```bash
+pip install kalecardiac
+```
+
+KaleCardiac is in alpha. Once a final release is out, a newer alpha needs `pip install --pre kalecardiac`. To install from source instead:
 
 ```bash
 git clone https://github.com/pykale/cardiac.git
@@ -68,7 +74,7 @@ cd cardiac
 pip install -e .
 ```
 
-Heavy libraries are kept out of the core install and grouped into extras, so that an ECG workflow does not pull in an imaging stack:
+Heavy libraries are kept out of the core install and grouped into extras, so that an ECG workflow does not pull in an imaging stack. Add one with `pip install "kalecardiac[<name>]"`, or `pip install -e ".[<name>]"` from source:
 
 | Extra | Packages | When to use |
 | --- | --- | --- |
