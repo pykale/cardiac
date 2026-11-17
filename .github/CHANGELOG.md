@@ -1,3 +1,9 @@
+# Version  0.1.0a2
+
+#### Code Improvements
+
+* [#23](https://github.com/pykale/cardiac/pull/23): Release hand-merged release pull requests and publish pre-releases to PyPI
+
 # Version  0.1.0a1
 
 #### Code Improvements
